@@ -342,6 +342,35 @@ def fmt_lap(sec):
     return f'{m}:{sec - 60 * m:06.3f}'
 
 
+def infer_phases(rc):
+    """Set m['_phase'] on race-control messages. OpenF1 sometimes leaves qualifying_phase empty for a
+    whole segment (e.g. Canada 2026: Q1 and SQ1 have no phase). If at least one segment is tagged,
+    an untagged GREEN LIGHT / CHEQUERED FLAG that falls between the neighbouring tagged segments is
+    given the missing segment number (before Q2's first message → Q1, after Q2's last → Q3)."""
+    first, last = {}, {}
+    for m in rc:
+        p = m.get('qualifying_phase')
+        if p in (1, 2, 3):
+            t = parse_time(m['date'])
+            first[p] = min(first.get(p, t), t)
+            last[p] = max(last.get(p, t), t)
+    for m in rc:
+        p = m.get('qualifying_phase')
+        if p not in (1, 2, 3) and first:
+            msg = (m.get('message') or '').upper()
+            if 'GREEN LIGHT' in msg or m.get('flag') == 'CHEQUERED':
+                t = parse_time(m['date'])
+                for k in (1, 2, 3):
+                    if k in first:
+                        continue
+                    lo, hi = last.get(k - 1), first.get(k + 1)
+                    if (lo is None or t > lo) and (hi is None or t < hi) and (lo or hi):
+                        p = k
+                        break
+        m['_phase'] = p if p in (1, 2, 3) else None
+    return rc
+
+
 def timing_segments(s, parent, weather=None):
     """Q1/Q2/Q3 as a snapshot of each segment's final laps.
 
@@ -354,9 +383,10 @@ def timing_segments(s, parent, weather=None):
     Also stores the fastest real lap of the segment as a target (lap started inside the segment).
     Returns [] if the session has no qualifying phases."""
     rc = openf1('race_control', session_key=s['session_key'])
+    infer_phases(rc)
     greens = {}
     for m in rc:
-        p = m.get('qualifying_phase')
+        p = m.get('_phase')
         if p in (1, 2, 3) and 'GREEN LIGHT' in (m.get('message') or '').upper() and p not in greens:
             greens[p] = parse_time(m['date'])
     if not greens:
@@ -375,7 +405,7 @@ def timing_segments(s, parent, weather=None):
     segs = []
     for p in sorted(greens):
         t0 = greens[p]
-        chq = [parse_time(m['date']) for m in rc if m.get('qualifying_phase') == p and m.get('flag') == 'CHEQUERED'
+        chq = [parse_time(m['date']) for m in rc if m.get('_phase') == p and m.get('flag') == 'CHEQUERED'
                and parse_time(m['date']) > t0]
         nxt = greens.get(p + 1)
         ends = [t for t in [min(chq) if chq else None, nxt] if t]       # red flags can stretch a segment
@@ -494,9 +524,11 @@ def main():
                 r['display'], r['track_keywords'], r['source'] = r.get('display') or disp, r.get('track_keywords') or kw, 'timing'
                 rows.append(r); counts['kept'] += 1
                 if s['session_name'] in QUALI:
-                    if key in kept_segs:
+                    nums = {int(x['segment']) for x in kept_segs.get(key, [])}
+                    if key in kept_segs and (nums >= {1, 2, 3} or 0 in nums or not nums & {2, 3}):
                         segs += kept_segs[key]
                     else:
+                        # never looked up, or Q2/Q3 found but Q1 missing (fixed by infer_phases): fetch again
                         backfill.append((s, r))                 # segments added below, within the time budget
                 continue
             row = None
@@ -533,6 +565,9 @@ def main():
             print(f'  failed: {e}', file=sys.stderr); continue      # retried next run
         if not new:   # no Q1/Q2/Q3 in race control: remember that, so it isn't fetched again every run
             new = [{'session_key': s['session_key'], 'segment': 0, 'utc_start': s['date_start'], 'source': 'timing'}]
+        elif {x['segment'] for x in new} != {1, 2, 3}:
+            # still incomplete (segment really missing from the feed): marker row so it isn't retried every run
+            new.append({'session_key': s['session_key'], 'segment': 0, 'utc_start': s['date_start'], 'source': 'timing'})
         segs += new; counts['segments'] += len(new)
 
     rows.sort(key=lambda r: (int(r['year']), int(r['round']), SESSION_ORDER.get(r['session'], 9)))
