@@ -1,6 +1,6 @@
 # F1 True Conditions — real F1 session conditions for Pure Planner
 
-Version 1.9.1 · CSP Lua app for Assetto Corsa. Pick an F1 circuit, a season (2023 → today) and a session
+Version 2.0 · CSP Lua app for Assetto Corsa. Pick an F1 circuit, a season (2023 → today) and a session
 (Sprint Qualifying/Shootout, Sprint, Qualifying, Race) and apply the conditions the real
 session started in to Pure Planner: air temp, track temp, humidity, wind speed/direction,
 sky (cloud cover) and rain.
@@ -48,7 +48,8 @@ circuit from the loaded track and loads the real conditions into Pure Planner by
 
 ### Pit window
 
-When you are in the pits (setup screen) the app opens its **F1 True Conditions - Pits** window by itself. If
+When you are in the pits (Info and Setup screens, only while in the pit lane or before you've
+driven in the session) the app opens its **F1 True Conditions - Pits** window by itself. If
 CSP doesn't show it there, the app draws the same panel directly on the pit screen instead
 (drag it by the header; the position is remembered). It is styled like the CSP/VRC setup panels: one column per real session (Sprint Q, Sprint,
 Qualifying, Race) with air and track temperature, humidity, wind, sky, rain and local start time.
@@ -77,15 +78,15 @@ Las Vegas 2025: Q1 raining (RUS 1:53.144), Q2 wet (RUS 1:50.935), Q3 damp (NOR 1
 All other sessions (race, sprint, qualifying without segments) are frozen the same way at their
 start-of-session conditions.
 
-### Overrides (haze, sky corrections)
+### Overrides (haze, sky, track grip)
 
 The timing feed has no visibility or haze data, so `data/f1_weather_overrides.csv` (downloaded next
 to the shared CSV, so changes reach everyone at their next game start) lets you correct the look:
 
 ```
-year,event,session,segment,when,pure_weather,mist_pct,note
-2026,sepang,,,dry,17,35,Haze across Malaysia (dry sessions only)
-2026,sepang,,,rain,,10,Light mist when it rains
+year,event,session,segment,when,car,pure_weather,mist_pct,grip_pct,surfaces,note
+2026,sepang,,,dry,,17,35,,,Haze across Malaysia (dry sessions only)
+2026,sepang,,,any,vrc_formula_alpha_2026,,,95,ROAD;CURBS;ASPHALT;ENTRY-EXIT,FRICTION 0.95
 ```
 
 - `event`: part of the circuit / display / meeting name or a track keyword (`sepang`).
@@ -93,10 +94,25 @@ year,event,session,segment,when,pure_weather,mist_pct,note
 - `segment`: `Q1`/`Q2`/`Q3` (`SQ1`…) — empty or `*` = all.
 - `when`: `dry` (no rain falling — the default when empty), `rain` (raining) or `any`. A dry haze
   line never changes a rainy session or segment; add a separate `rain` line for those.
+- `car`: part of the car id (`vrc_formula_alpha_2026` matches `_2026` and `_2026_csp`) — empty or `*` = any car.
 - `pure_weather`: Pure sky type (15 clear, 16 few, 17 scattered, 18 broken, 19 overcast, 23 haze).
   Whether it rains always comes from the data. In rain only rain types count (6 light rain, 7 rain,
   8 heavy rain) and set the rain strength; anything else is ignored there.
 - `mist_pct`: Pure mist 0–100 (empty = automatic from humidity).
+- `grip_pct`: surface friction × 100, written as `FRICTION` into the track's own
+  `data\surfaces.ini` (`109` → `FRICTION=1.09`). Tyres are not touched.
+- `surfaces`: which surface `KEY`s get it, `;`-separated. Empty = `ROAD;CURB;CURBS`. Track mods name
+  their surfaces differently (chq_sepang: `ROAD;CURBS;ASPHALT;ENTRY-EXIT`), so check the track's
+  `surfaces.ini`.
+- **AC reads `surfaces.ini` only while loading the track**, so a new grip is used from the **next**
+  time you load the track. Until then the *Track grip* row is red and the pit panel shows
+  **Reload track for … grip** with a **Reload track** button (click twice: AC restarts on the same
+  track and session, like the VRC track zone editor). Hotlapping the same session again: no reload
+  needed after the first.
+- The original file is saved once as `surfaces.ini.f1tc_original`. Its values are put back when no grip
+  override applies, when the app is switched off, and in online sessions. Online servers check the
+  track files, so after racing offline with a grip override, load the track once offline (or with the
+  app off) before joining a server with it.
 - Empty value = keep the data's value; later lines win. Overridden sessions show `[override]`.
 
 ### Manual

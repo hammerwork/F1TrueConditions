@@ -1,4 +1,4 @@
--- F1 True Conditions v1.9.1 — real F1 session conditions as Pure Planner presets
+-- F1 True Conditions v2.0 — real F1 session conditions as Pure Planner presets
 --
 -- Auto mode (default on for VRC Formula Alpha cars):
 --   * At session load the app writes the matching plan to Pure Planner's Plans\last_used.json
@@ -32,6 +32,15 @@ local OLD_APP = (function()
 end)()
 local OLD_APP_MSG = 'Old "F1 Real Weather" app found: delete apps\\lua\\F1RealWeather'
 
+local CAR_ID = ''
+-- qualifying tyre grip per segment (Q1 / Q2 / Q3), fixed in release builds
+local TYRE_PCT = { 95, 98, 100 }
+local grip, gripUpdate, reloadTrack
+local pitAllowed, drawWatermark
+local tyre = { applied = 0, t = 1, text = '', pct = 100, seg = nil }   -- live tyre grip per Q segment
+local trackKnown = false        -- the loaded AC track matches an F1 circuit (else the app is off for this load)
+pcall(function() CAR_ID = (ac.getCarID(0) or ''):lower() end)
+
 local settings = ac.storage({
   dbUrl       = '',            -- personal override; empty = use data\\db_url.txt
   autoUpdate  = true,          -- download the shared database at every start
@@ -46,6 +55,8 @@ local settings = ac.storage({
   pitX        = 40,
   pitY        = 160,
   pitSize     = 1.0,
+  watermark   = true,          -- 'F1 True Conditions running' watermark at the top of the screen
+  watermarkAlpha = 0.45,
   qSeg        = 1,             -- qualifying segment to use: 1 = Q1, 2 = Q2, 3 = Q3           -- personal size multiplier on top of screen-resolution scaling
 })
 
@@ -80,6 +91,39 @@ local CIRCUITS = {
   ['Madring']            = { 'Madrid',         { 'madring', 'madrid' } },
   ['Kuala Lumpur']       = { 'Sepang',         { 'sepang', 'malaysia', 'kuala' } },
 }
+
+-- country flags: AC ships them as content\gui\NationFlags\<ISO3>.png (48×48, flag in the middle)
+local CIRCUIT_ISO = {
+  ['Sakhir'] = 'BHR', ['Jeddah'] = 'SAU', ['Melbourne'] = 'AUS', ['Shanghai'] = 'CHN', ['Suzuka'] = 'JPN',
+  ['Miami'] = 'USA', ['Imola'] = 'ITA', ['Monte Carlo'] = 'MCO', ['Catalunya'] = 'ESP', ['Montreal'] = 'CAN',
+  ['Spielberg'] = 'AUT', ['Silverstone'] = 'GBR', ['Hungaroring'] = 'HUN', ['Spa-Francorchamps'] = 'BEL',
+  ['Zandvoort'] = 'NLD', ['Monza'] = 'ITA', ['Baku'] = 'AZE', ['Singapore'] = 'SGP', ['Austin'] = 'USA',
+  ['Mexico City'] = 'MEX', ['Interlagos'] = 'BRA', ['Las Vegas'] = 'USA', ['Lusail'] = 'QAT',
+  ['Yas Marina Circuit'] = 'ARE', ['Madring'] = 'ESP', ['Kuala Lumpur'] = 'MYS',
+}
+-- fallback for circuits added later: OpenF1 country name → ISO3
+local COUNTRY_ISO = {
+  ['Bahrain'] = 'BHR', ['Saudi Arabia'] = 'SAU', ['Australia'] = 'AUS', ['China'] = 'CHN', ['Japan'] = 'JPN',
+  ['United States'] = 'USA', ['Italy'] = 'ITA', ['Monaco'] = 'MCO', ['Spain'] = 'ESP', ['Canada'] = 'CAN',
+  ['Austria'] = 'AUT', ['United Kingdom'] = 'GBR', ['Great Britain'] = 'GBR', ['Hungary'] = 'HUN',
+  ['Belgium'] = 'BEL', ['Netherlands'] = 'NLD', ['Azerbaijan'] = 'AZE', ['Singapore'] = 'SGP', ['Mexico'] = 'MEX',
+  ['Brazil'] = 'BRA', ['Qatar'] = 'QAT', ['United Arab Emirates'] = 'ARE', ['Malaysia'] = 'MYS',
+  ['Portugal'] = 'PRT', ['Turkey'] = 'TUR', ['Germany'] = 'DEU', ['France'] = 'FRA', ['South Africa'] = 'ZAF',
+  ['Argentina'] = 'ARG', ['Korea'] = 'KOR', ['India'] = 'IND', ['Russia'] = 'RUS', ['Thailand'] = 'THA',
+}
+local FLAG_DIR = ''
+pcall(function() FLAG_DIR = ac.getFolder(ac.FolderID.Root) .. '\\content\\gui\\NationFlags\\' end)
+local flagCache = {}
+local function flagPath(circuit, country)
+  local key = tostring(circuit) .. '|' .. tostring(country)
+  if flagCache[key] == nil then
+    local iso = CIRCUIT_ISO[circuit or ''] or COUNTRY_ISO[country or '']
+    local path = iso and FLAG_DIR ~= '' and (FLAG_DIR .. iso .. '.png') or false
+    if path and not pcall(function() if not io.fileExists(path) then error('missing') end end) then path = false end
+    flagCache[key] = path
+  end
+  return flagCache[key] or nil
+end
 
 local function displayName(circuit)
   local c = CIRCUITS[circuit]
@@ -135,7 +179,7 @@ local NUMERIC = {
   year = true, stamp_ts = true, air_c = true, track_c = true, humidity_pct = true, pressure_hpa = true,
   wind_kmh = true, wind_dir_deg = true, rain = true, rain_frac = true, cloud_pct = true, precip_mm = true,
   pure_weather = true, air_min = true, air_max = true, track_min = true, track_max = true, round = true,
-  segment = true, best_lap_s = true, mist_pct = true,
+  segment = true, best_lap_s = true, mist_pct = true, grip_pct = true,
 }
 
 local function isSessionRow(r) return r.circuit and r.circuit ~= '' and r.year and r.session end
@@ -206,9 +250,36 @@ local function attachSegments(segRows, source)
     local s = byKey[tostring(r.session_key)]
     r.segs, r._eff = nil, nil
     if s and QUALI[r.session] then
-      local list = {}
-      for i = 1, 3 do if s[i] then list[#list + 1] = s[i] end end
-      if #list > 0 then r.segs = list end
+      local have = {}
+      for i = 1, 3 do if s[i] then have[#have + 1] = i end end
+      if #have > 0 then
+        -- a segment missing from the timing feed (e.g. Canada 2026 Q1/SQ1) is copied from the nearest
+        -- one that exists (ties: the earlier one), at that segment's usual time of day; no real best lap
+        local gapMin = r.session == 'Qualifying' and 21 or 17          -- typical end-to-end gap between segments
+        local prefix = r.session == 'Qualifying' and 'Q' or 'SQ'
+        local list = {}
+        for i = 1, 3 do
+          if s[i] then
+            list[i] = s[i]
+          else
+            local src = nil
+            for _, j in ipairs(have) do
+              if not src or math.abs(j - i) < math.abs(src - i) then src = j end
+            end
+            local g = {}
+            for k, v in pairs(s[src]) do g[k] = v end
+            g.segment, g.label = i, prefix .. i
+            g.copiedFrom = s[src].label or (prefix .. src)
+            g.best_lap, g.best_lap_s, g.best_driver = '', nil, ''
+            if tonumber(g.stamp_ts) then
+              g.stamp_ts = tonumber(g.stamp_ts) + (i - src) * gapMin * 60
+              g.local_start = os.date('!%Y-%m-%d %H:%M', g.stamp_ts)
+            end
+            list[i] = g
+          end
+        end
+        r.segs = list
+      end
     end
   end
   segDb.rows, segDb.source = segRows, source
@@ -232,7 +303,10 @@ end
 
 -- Overrides (data\f1_weather_overrides.csv, also downloaded next to the shared CSV): hand-made
 -- corrections for what the timing feed can't see, e.g. haze. Columns:
---   year, event, session, segment, when, pure_weather, mist_pct, note
+--   year, event, session, segment, when, car, pure_weather, mist_pct, grip_pct, note
+-- car = part of the car id ('vrc_formula_alpha_2026'), empty or * = any car.
+-- grip_pct = ROAD/CURB friction of the track's surfaces.ini in % (109 → FRICTION=1.09), see gripUpdate.
+-- surfaces = which surface KEYs get it, ';'-separated (default ROAD;CURB;CURBS), e.g. ROAD;CURBS;ASPHALT.
 -- event = part of the circuit / display / meeting name or a track keyword ('sepang');
 -- session and segment empty or * = all; later lines win. Empty value = keep the data's value.
 -- when = dry (default: no rain falling), rain (raining), any. So a dry haze line never touches
@@ -242,6 +316,8 @@ local ovr = { rows = {}, source = '' }
 
 local function ovrMatches(o, r, segLabel)
   if o.year ~= r.year then return false end
+  local car = (o.car or ''):lower()
+  if car ~= '' and car ~= '*' and not CAR_ID:find(car, 1, true) then return false end
   local ev = o.event:lower()
   local hay = ((r.display or '') .. '|' .. (r.circuit or '') .. '|' .. (r.meeting or '') .. '|' .. (r.track_keywords or '')):lower()
   if not hay:find(ev, 1, true) then return false end
@@ -268,10 +344,20 @@ end
 
 -- The row actually applied: a copy of the session row, with the chosen Q1/Q2/Q3 merged in for
 -- qualifying (time, temperatures, wind, rain, track state) and the overrides on top.
+-- index in r.segs of segment number num (1 = Q1 …); a missing segment falls back to the next one
+-- that exists (no Q1 data → Q2), else the last one
+local function segIdx(r, num)
+  if not r or not r.segs then return 0 end
+  num = num or settings.qSeg or 1
+  for k, g in ipairs(r.segs) do if g.segment == num then return k end end
+  for k, g in ipairs(r.segs) do if (g.segment or 0) > num then return k end end
+  return #r.segs
+end
+
 local function effRow(r, segIndex)
   if not r then return r end
   local i = 0
-  if r.segs then i = math.max(1, math.min(segIndex or settings.qSeg or 1, #r.segs)) end
+  if r.segs then i = segIndex or segIdx(r) end
   r._eff = r._eff or {}
   if not r._eff[i] then
     local e = {}
@@ -295,6 +381,8 @@ local function effRow(r, segIndex)
           if not raining or RAIN_PRESET[o.pure_weather] then e.pure_weather = o.pure_weather end
         end
         if o.mist_pct then e.mist_pct = o.mist_pct end
+        if o.grip_pct then e.grip_pct = o.grip_pct end
+        if o.surfaces and o.surfaces ~= '' then e.grip_surfaces = o.surfaces end
         e.overridden = true
       end
     end
@@ -581,7 +669,7 @@ end
 -- Selection helpers
 ---------------------------------------------------------------------------------------------------
 local sel = { circuit = nil, year = nil, idx = 1 }
-local pit = { lastWindowDraw = -10, overlay = false, tried = false, menuT = 0 }   -- pit-screen panel state
+local pit = { lastWindowDraw = -10, overlay = false, tried = false, menuT = 0, open = false }   -- pit-screen panel state
 local detectedTrack, carId = '', ''
 pcall(function() carId = (ac.getCarID(0) or ''):lower() end)
 
@@ -639,6 +727,11 @@ end
 local autoState = { active = false, circuit = nil, reason = '' }
 
 local function autoApply(viaStartup)
+  if not trackKnown then
+    autoState.active, autoState.reason = false, 'Track "' .. detectedTrack .. '" is not an F1 circuit — off for this session'
+    sync.phase, sync.msg = 'off', 'Track not recognised — F1 True Conditions is off'
+    return
+  end
   if not settings.autoApply then
     autoState.active, autoState.reason = false, 'F1 True Conditions is off'
     sync.phase, sync.msg = 'off', 'F1 True Conditions is off — Pure Planner keeps its current plan'
@@ -658,10 +751,188 @@ end
 ---------------------------------------------------------------------------------------------------
 -- Start-up + session tracking
 ---------------------------------------------------------------------------------------------------
+trackKnown = detectTrack() ~= nil
 if settings.autoDetect then selectCircuit(detectTrack()) end
-if not sel.circuit then selectCircuit(db.circuits[1]) end
+if not sel.circuit then selectCircuit(db.circuits[1]) end      -- main window browsing only
 autoApply(true)
 -- (automatic database download is started at the end of the file, once refreshDb exists)
+
+---------------------------------------------------------------------------------------------------
+-- Track grip (overrides file, grip_pct): written as FRICTION of the ROAD and CURB surfaces in the
+-- track's own data\surfaces.ini (109 → FRICTION=1.09). AC reads that file only while loading the
+-- track, so a new value is used from the NEXT time the track is loaded (the panel says so).
+-- The original file is kept as surfaces.ini.f1tc_original and its values are put back when no
+-- grip override applies, when the app is switched off, and in online sessions (servers compare
+-- the file's checksum).
+---------------------------------------------------------------------------------------------------
+local DEFAULT_SURFACES = 'ROAD;CURB;CURBS'      -- surface KEYs changed when the override has no 'surfaces'
+local SURF_FILE = ''
+pcall(function() SURF_FILE = ac.getTrackDataFilename('surfaces.ini') or '' end)
+local SURF_BACKUP = SURF_FILE .. '.f1tc_original'
+
+-- friction of ROAD/CURB sections: returns { [sectionName] = {key=..., friction=...} }
+local function readFrictions(text)
+  local out, cur = {}, nil
+  for line in ((text or '') .. '\n'):gmatch('([^\r\n]*)\r?\n') do
+    local sec = line:match('^%s*%[([^%]]+)%]')
+    if sec then cur = sec; out[cur] = {} elseif cur then
+      local k, v = line:match('^%s*([%w_]+)%s*=%s*([^;]-)%s*$')
+      if k == 'KEY' then out[cur].key = v:upper() elseif k == 'FRICTION' then out[cur].friction = tonumber(v) end
+    end
+  end
+  return out
+end
+
+-- value = number → FRICTION of every section whose KEY is in keys; table section → number → those sections
+local function writeFrictions(text, value, keys)
+  local info = readFrictions(text)
+  local lines, cur = {}, nil
+  for line in ((text or '') .. '\n'):gmatch('([^\r\n]*)\r?\n') do
+    local sec = line:match('^%s*%[([^%]]+)%]')
+    if sec then cur = sec end
+    local k = cur and line:match('^%s*FRICTION%s*=')
+    local f = nil
+    if k and info[cur] then
+      if type(value) == 'table' then f = value[cur]
+      elseif keys and keys[info[cur].key or ''] then f = value end
+    end
+    if f then line = string.format('FRICTION=%s', (string.format('%.4f', f):gsub('0+$', ''):gsub('%.$', ''))) end
+    lines[#lines + 1] = line
+  end
+  while #lines > 0 and lines[#lines] == '' do table.remove(lines) end
+  return table.concat(lines, '\r\n') .. '\r\n'
+end
+
+local function keySet(list)
+  local t = {}
+  for k in ((list ~= nil and list ~= '' and list or DEFAULT_SURFACES) .. ';'):gmatch('([^;]*);') do
+    k = k:gsub('^%s+', ''):gsub('%s+$', ''):upper(); if k ~= '' then t[k] = true end
+  end
+  return t
+end
+
+-- friction of the first section with one of these keys (ROAD first)
+local function surfFriction(text, keys)
+  local info, best = readFrictions(text), nil
+  for _, s in pairs(info) do
+    if s.friction and keys[s.key or ''] then
+      if s.key == 'ROAD' then return s.friction end
+      best = best or s.friction
+    end
+  end
+  return best
+end
+
+grip = { loadedText = nil, loaded = nil, target = nil, text = '', pending = false, lowStart = false, needsReload = false, t = 1, last = false }
+pcall(function() grip.loadedText = io.load(SURF_FILE, nil) end)    -- the file as this session loaded it
+
+gripUpdate = function(dt)
+  grip.t = grip.t + dt
+  if grip.t < 0.5 then return end
+  grip.t = 0
+  if SURF_FILE == '' then return end
+  local sim = ac.getSim()
+  local online = sim and sim.isOnlineRace
+  local r = settings.autoApply and trackKnown and sync.row or nil
+  local target = (not online) and r and r.grip_pct and clamp(r.grip_pct, 50, 150) / 100 or nil
+  local keys = keySet(r and r.grip_surfaces)
+  grip.target = target
+  grip.loaded = grip.loadedText and surfFriction(grip.loadedText, keys)
+  grip.pending = target ~= nil and (grip.loaded == nil or math.abs(grip.loaded - target) > 0.0005)
+  -- qualifying wants a fully rubbered track from lap one (CM 'Optimum'), not one that gains grip per lap
+  grip.road = sim and sim.roadGrip or nil
+  grip.lowStart = (not online) and r ~= nil and QUALI[r.session] == true and grip.road ~= nil and grip.road < 0.995
+  grip.needsReload = grip.pending or grip.lowStart
+  grip.text = online and 'track file not changed online'
+    or target and (grip.pending and 'used from the next track load' or 'active') or ''
+  local want = target and string.format('%.4f|%s', target, (r and r.grip_surfaces or '')) or 'none'
+  if want == grip.last then return end                    -- write only when the wanted value changes
+  grip.last = want
+  local cur = io.load(SURF_FILE, nil)
+  if not cur then grip.text = 'surfaces.ini not found'; return end
+  local new = cur
+  if io.fileExists(SURF_BACKUP) then                     -- start from the original frictions
+    local orig = {}
+    for sec, s in pairs(readFrictions(io.load(SURF_BACKUP, ''))) do orig[sec] = s.friction end
+    new = writeFrictions(new, orig)
+  end
+  if target then
+    if not io.fileExists(SURF_BACKUP) then io.save(SURF_BACKUP, cur) end
+    if not surfFriction(cur, keys) then grip.text = 'no ROAD/CURB surface in surfaces.ini (set "surfaces")' end
+    new = writeFrictions(new, target, keys)
+  end
+  if new and new ~= cur and not io.save(SURF_FILE, new) then grip.text = 'could not write surfaces.ini' end
+end
+
+-- Reload the track (AC restarts on the same race.ini, like the VRC track zone editor does).
+-- Two clicks: the first arms the button for 3 s, the second restarts.
+-- In qualifying the restart also sets Content Manager's track to 'Optimum' (100 % grip, no rubbering in).
+local OPTIMUM_INI = '[DYNAMIC_TRACK]\nSESSION_START=100\nRANDOMNESS=0\nSESSION_TRANSFER=100\nLAP_GAIN=1\n'
+reloadTrack = function()
+  if not (grip.confirmUntil and os.clock() < grip.confirmUntil) then grip.confirmUntil = os.clock() + 3; return end
+  grip.confirmUntil = nil
+  local r = sync.row
+  local ini = (r and QUALI[r.session]) and OPTIMUM_INI or nil
+  if not pcall(ac.restartAssettoCorsa, ini) then grip.text = 'reload not available: go back to Content Manager and drive again' end
+end
+
+---------------------------------------------------------------------------------------------------
+-- Qualifying tyre grip per segment (Q1 95 %, Q2 98 %, Q3 100 % by default): the track rubbers in
+-- during real qualifying, so earlier segments get less grip. Done live with physics.setGripDecrease
+-- on the player's car (no reload). Needs the track to allow apps to change physics
+-- ([_SCRIPTING_PHYSICS] ALLOW_APPS=1 in its surfaces.ini). Offline only.
+---------------------------------------------------------------------------------------------------
+local PHYS_ALLOWED = false
+do
+  local inSec = false
+  for line in ((grip.loadedText or '') .. '\n'):gmatch('([^\r\n]*)\r?\n') do
+    local sec = line:match('^%s*%[([^%]]+)%]')
+    if sec then inSec = sec:upper() == '_SCRIPTING_PHYSICS'
+    elseif inSec and line:upper():match('^%s*ALLOW_APPS%s*=%s*1') then PHYS_ALLOWED = true end
+  end
+end
+
+local function tyreUpdate(dt)
+  tyre.t = tyre.t + dt
+  if tyre.t < 0.5 then return end
+  tyre.t = 0
+  local sim = ac.getSim()
+  local online = sim and sim.isOnlineRace
+  local r = settings.autoApply and trackKnown and sync.row or nil
+  local seg = r and r.segLabel and tonumber(tostring(r.segLabel):match('(%d)$')) or nil
+  local pct = 100
+  if seg and not online then
+    pct = TYRE_PCT[seg] or 100
+  end
+  tyre.pct, tyre.seg = pct, seg
+  local dec = clamp(1 - pct / 100, 0, 0.5)
+  if not seg then tyre.text = 'only in qualifying segments'
+  elseif online then tyre.text = 'not changed online'
+  elseif not PHYS_ALLOWED and dec > 0 then tyre.text = 'this track doesn\'t allow apps to change grip'
+  else tyre.text = string.format('%s: tyres at %g %%', r.segLabel, pct) end
+  if math.abs(dec - tyre.applied) > 0.0005 then
+    local ok = pcall(function() physics.setGripDecrease(0, ac.Wheel.All, dec) end)
+    if ok then tyre.applied = dec elseif dec > 0 then tyre.text = 'grip change not available on this track' end
+  end
+end
+
+-- text of the red reload note
+local function reloadNote()
+  if grip.pending and grip.target then
+    return string.format('Reload track for %g %% grip', grip.target * 100) .. (grip.lowStart and ' (Optimum)' or '')
+  end
+  return string.format('Track at %.0f %% grip — reload at Optimum for qualifying', (grip.road or 0) * 100)
+end
+
+-- the pit panel is only for the pit lane / the start of a session before driving
+pitAllowed = function()
+  local ok, res = pcall(function()
+    local car = ac.getCar(0)
+    if not car then return true end
+    return car.isInPitlane or car.isInPit or (car.distanceDrivenSessionKm or 0) < 0.05
+  end)
+  return not ok or res == true
+end
 
 local lastSessionIndex, lastSessionType = nil, nil
 pcall(function() lastSessionIndex = ac.getSim().currentSessionIndex end)
@@ -677,17 +948,24 @@ function script.update(dt)
     if changed and autoState.active then autoApply(false) end
   end
   syncUpdate(dt)
+  gripUpdate(dt)
+  tyreUpdate(dt)
 
   -- pit / setup screen: open our setup window; if CSP doesn't show it, draw it as an overlay
   local inMenu = false
   pcall(function() inMenu = ac.getSim().isInMainMenu end)
-  if inMenu and settings.pitPanel then
+  local allowed = inMenu and settings.pitPanel and pitAllowed()
+  if allowed ~= pit.open then                -- open in the pits / before driving, closed otherwise
+    pit.open = allowed
+    pcall(ac.setWindowOpen, 'pit', allowed)
+  end
+  if allowed then
     pit.menuT = pit.menuT + dt
-    if not pit.tried then pit.tried = true; pcall(ac.setWindowOpen, 'pit', true) end
-    -- only fall back to the overlay while CSP isn't drawing our setup window itself
-    pit.overlay = pit.menuT > 1.5 and os.clock() - (pit.lastWindowDraw or -10) > 0.5
+    -- Setup tab: CSP draws our setup window itself. Info tab: drawn as an overlay, but only when CSP
+    -- reports the Info section (never on Drive / Lap times / Telemetry, where the setup window isn't drawn either)
+    pit.overlay = pit.section == 'info' and pit.menuT > 0.3 and os.clock() - (pit.lastWindowDraw or -10) > 0.5
   else
-    pit.menuT, pit.overlay = 0, false
+    pit.menuT, pit.overlay, pit.section = 0, false, nil
   end
 end
 
@@ -757,6 +1035,7 @@ local function refreshDb(silent)
     local keepC, keepY, cur = sel.circuit and sel.circuit.name, sel.year, currentRow()
     local keepS = cur and cur.session
     indexDb(rows, 'online copy')
+    trackKnown = detectTrack() ~= nil      -- a new circuit may only be recognisable with the new data
     loadSegments()
     loadOverrides()
     selectCircuit(db.byName[keepC] or detectTrack() or db.circuits[1], keepY, keepS)
@@ -878,6 +1157,7 @@ local ROWS = {
   false,
   { 'Sky',            function(r) return SKY_SHORT[r.pure_weather] or WEATHER_NAMES[r.pure_weather] or tostring(r.pure_weather) end },
   { 'Haze / mist',    function(r) local m = mistPct(r); return m >= 1 and string.format('%d %%', math.floor(m + 0.5)) or '–' end },
+  { 'Track grip',     function(r) return r.grip_pct and string.format('%g %%', r.grip_pct) or '–' end },
   { 'Track',          function(r)
       local st = r.track_state
       if st == 'rain' or (st == 'wet' and r.rain == 1) then return r.source == 'forecast' and 'Rain likely' or 'Raining' end
@@ -890,7 +1170,7 @@ local ROWS = {
 }
 -- Base layout is designed at 1440p; everything is multiplied by pitScale() so the panel keeps
 -- the same proportions at 1080p (x0.75) and 4K (x1.5). settings.pitSize adds a personal tweak.
-local BASE = { W = 460, ROW = 26, HEAD = 44, COLHEAD = 30, SEG = 28, FOOT = 34, M = 14, GAP = 9, LABEL = 130 }
+local BASE = { W = 560, ROW = 26, HEAD = 44, COLHEAD = 30, SEG = 28, FOOT = 34, M = 14, GAP = 9, LABEL = 130, RELOAD = 40 }
 
 local function pitScale()
   local h = 1440
@@ -902,6 +1182,8 @@ local function pitSize(S)
   local n = 0
   for _, rr in ipairs(ROWS) do n = n + (rr and BASE.ROW or BASE.GAP) end
   local h = BASE.M + BASE.HEAD + BASE.COLHEAD + BASE.SEG + n + 8 + BASE.FOOT + BASE.M
+  if not trackKnown then h = BASE.M + BASE.HEAD + 30 + BASE.M end   -- just the 'not recognised' line
+  if trackKnown and grip.needsReload then h = h + BASE.RELOAD end    -- 'reload track' bar
   return vec2(math.floor(BASE.W * S), math.floor(h * S))
 end
 local function pitHeight() return pitSize(pitScale()).y end
@@ -920,6 +1202,7 @@ local function drawSwitch(id, pos, S, on)
 end
 
 local function setEnabled(on)
+  if on and not trackKnown then return end
   settings.autoApply = on
   if on then
     autoApply(false)
@@ -938,9 +1221,9 @@ local function drawPit(size, isOverlay)
   pushF(F.regular)
 
   -- header: title + on/off switch
-  local c = sel.circuit
-  local r = currentRow()
-  local on = settings.autoApply
+  local c = trackKnown and sel.circuit or nil
+  local r = c and currentRow() or nil
+  local on = settings.autoApply and trackKnown
   local title = c and (c.display .. (r and ('  ·  ' .. (r.meeting or '') .. ' ' .. r.year) or '')) or 'F1 True Conditions'
   local swW, swH = 38 * S, 20 * S
   if isOverlay then
@@ -951,12 +1234,20 @@ local function drawPit(size, isOverlay)
       settings.pitX, settings.pitY = settings.pitX + d.x, settings.pitY + d.y
     end
   end
-  txt(title, fs(18), vec2(M, M), vec2(size.x - swW - M * 2, M + 28 * S), ui.Alignment.Start, on and V.text or V.dim)
-  if drawSwitch('##f1tcOnOff', vec2(size.x - M - swW, M + (28 * S - swH) / 2), S, on) then setEnabled(not on) end
-  if ui.itemHovered() then ui.setTooltip(on and 'F1 True Conditions on — click to turn off' or 'F1 True Conditions off — click to turn on') end
+  local titleX = M
+  local flag = r and flagPath(r.circuit, r.country)
+  if flag then
+    local fh = 32 * S                       -- square image, the flag itself is ~2/3 of its height
+    local fy = M + (28 * S - fh) / 2
+    ui.drawImage(flag, vec2(M - 2 * S, fy), vec2(M - 2 * S + fh, fy + fh), on and rgbm(1, 1, 1, 1) or rgbm(1, 1, 1, 0.6))
+    titleX = M + fh + 6 * S
+  end
+  txt(title, fs(18), vec2(titleX, M), vec2(size.x - swW - M * 2, M + 28 * S), ui.Alignment.Start, on and V.text or V.dim)
+  if drawSwitch('##f1tcOnOff', vec2(size.x - M - swW, M + (28 * S - swH) / 2), S, on) and trackKnown then setEnabled(not on) end
+  if ui.itemHovered() then ui.setTooltip(not trackKnown and 'Track not recognised — F1 True Conditions is off for this session' or on and 'F1 True Conditions on — click to turn off' or 'F1 True Conditions off — click to turn on') end
 
   if not c then
-    txt(autoState.reason ~= '' and autoState.reason or 'No F1 circuit for this track', fs(14),
+    txt(not trackKnown and 'Track not recognised — off for this session' or (autoState.reason ~= '' and autoState.reason or 'No F1 circuit for this track'), fs(14),
       vec2(M, M + HEAD), vec2(size.x - M, M + HEAD + 30 * S), ui.Alignment.Start, V.dim)
     popF(F.regular); return
   end
@@ -996,27 +1287,37 @@ local function drawPit(size, isOverlay)
   for i, s in ipairs(list) do
     local x0 = M + labelW + (i - 1) * colW
     if s.segs then
-      local n = #s.segs
-      local cur = math.min(settings.qSeg or 1, n)
+      -- always Q1 / Q2 / Q3; a segment without data is greyed out and can't be picked
+      local n = 3
+      local byNum = {}
+      for _, g in ipairs(s.segs) do byNum[g.segment] = g end
+      local curNum = s.segs[segIdx(s)].segment
       local pad, gap = 8 * S, 3 * S
       local pw = (colW - pad * 2 - gap * (n - 1)) / n
       for k = 1, n do
         local p1 = vec2(x0 + pad + (k - 1) * (pw + gap), segY)
         local p2 = vec2(p1.x + pw, segY + SEGH - 6 * S)
+        local g = byNum[k]
         ui.setCursor(p1)
-        if ui.invisibleButton('##seg' .. i .. '_' .. k, vec2(pw, p2.y - p1.y)) then
+        if ui.invisibleButton('##seg' .. i .. '_' .. k, vec2(pw, p2.y - p1.y)) and g then
           settings.qSeg = k
           sel.idx = i
           if on then applyManual(s) end
         end
         local hov = ui.itemHovered()
-        local active = on and i == sel.idx and k == cur
+        local active = g and on and i == sel.idx and k == curNum
         if active then ui.drawRectFilled(p1, p2, V.red, 4 * S)
-        else ui.drawRect(p1, p2, hov and V.dim or V.line, 4 * S, nil, 1) end
-        local g = s.segs[k]
-        local lbl = (g.label or ('Q' .. k)):gsub('^SQ', 'Q')
-        txt(lbl, fs(12), p1, p2, ui.Alignment.Center, (active or hov) and V.text or (k == cur and V.text or V.dim))
-        if hov then
+        elseif g then ui.drawRect(p1, p2, hov and V.dim or V.line, 4 * S, nil, 1)
+        else ui.drawRect(p1, p2, rgbm(1, 1, 1, 0.05), 4 * S, nil, 1) end
+        local lbl = 'Q' .. k
+        txt(lbl, fs(12), p1, p2, ui.Alignment.Center, not g and V.faint or ((active or hov) and V.text or (k == curNum and V.text or V.dim)))
+        if hov and g and g.copiedFrom then
+          local tp = TYRE_PCT[k] or 100
+          ui.setTooltip(string.format('No %s data in the official timing feed: conditions copied from %s%s', g.label, g.copiedFrom,
+            tp < 100 and string.format(',\ngrip slightly lowered (tyres at %g %%)', tp) or ''))
+        elseif hov and not g then
+          ui.setTooltip(string.format('No %s data for this session (not in the official timing feed)', (s.session == 'Qualifying' and 'Q' or 'SQ') .. k))
+        elseif hov then
           ui.setTooltip(string.format('%s final laps %s  ·  air %s °C, track %s °C  ·  %s%s', g.label or '', (g.local_start or ''):sub(12, 16),
             fmt(g.air_c, '%.1f'), fmt(g.track_c, '%.1f'), stateText(g),
             (g.best_lap and g.best_lap ~= '') and ('\nReal best lap: ' .. g.best_lap .. ' ' .. (g.best_driver or '')) or ''))
@@ -1039,10 +1340,32 @@ local function drawPit(size, isOverlay)
         local e = effRow(s)
         local wetSurface = e.rain == 1 or e.track_state == 'wet' or e.track_state == 'damp' or e.track_state == 'drying'
         local col = (rr[1] == 'Track' and wetSurface) and V.wet or ((on and i == sel.idx) and V.text or V.dim)
+        if rr[1] == 'Track grip' and on and i == sel.idx and grip.needsReload then col = V.warn end
         txt(rr[2](e), fs(14), vec2(x0, y), vec2(x0 + colW, y + ROW), ui.Alignment.Center, col)
       end
       y = y + ROW
     end
+  end
+
+  -- track grip waiting for a reload: red note + Reload track button (same as the VRC zone editor)
+  if grip.needsReload then
+    y = y + 8 * S
+    ui.drawLine(vec2(M, y), vec2(size.x - M, y), V.line, 1)
+    local RH = BASE.RELOAD * S
+    local bw, bh = 128 * S, 26 * S
+    local b1 = vec2(size.x - M - bw, y + (RH - bh) / 2)
+    local b2 = vec2(b1.x + bw, b1.y + bh)
+    txt(reloadNote(), fs(13), vec2(M + 4 * S, y),
+      vec2(b1.x - 8 * S, y + RH), ui.Alignment.Start, V.warn)
+    ui.setCursor(b1)
+    if ui.invisibleButton('##f1tcReload', vec2(bw, bh)) then reloadTrack() end
+    local hov = ui.itemHovered()
+    local armed = grip.confirmUntil and os.clock() < grip.confirmUntil
+    ui.drawRectFilled(b1, b2, armed and V.red or rgbm(0.92, 0.08, 0.12, hov and 0.85 or 0.65), 4 * S)
+    txt(armed and 'Click to confirm' or 'Reload track', fs(13), b1, b2, ui.Alignment.Center, V.text)
+    if hov then ui.setTooltip('Restarts Assetto Corsa on this track so the new grip is loaded' ..
+      ((sync.row and QUALI[sync.row.session]) and ' (track set to Optimum for qualifying)' or '')) end
+    y = y + RH - 8 * S
   end
 
   -- footer: Pure Planner status (green when Pure confirms it)
@@ -1051,7 +1374,8 @@ local function drawPit(size, isOverlay)
   local sc = sync.phase == 'confirmed' and V.good or sync.phase == 'failed' and V.warn or V.dim
   ui.drawCircleFilled(vec2(M + 6 * S, y + FOOT / 2), 4 * S, sc)
   if OLD_APP then sc = V.warn end
-  txt(OLD_APP and OLD_APP_MSG or (sync.msg ~= '' and sync.msg or 'Not applied yet'), fs(13), vec2(M + 18 * S, y),
+  local footMsg = sync.msg ~= '' and sync.msg or 'Not applied yet'
+  txt(OLD_APP and OLD_APP_MSG or footMsg, fs(13), vec2(M + 18 * S, y),
     vec2(size.x - M, y + FOOT), ui.Alignment.Start, sc)
   popF(F.regular)
 end
@@ -1059,6 +1383,7 @@ end
 -- CSP setup window (manifest ID "pit"); resized live to the current scale
 local lastPitSize = nil
 function windowPit(dt)
+  if not pitAllowed() then return end
   pit.lastWindowDraw = os.clock()
   local want = pitSize(pitScale())
   if not lastPitSize or lastPitSize.x ~= want.x or lastPitSize.y ~= want.y then
@@ -1115,12 +1440,12 @@ function windowMain(dt)
   local base = currentRow()
   if base and base.segs then
     ui.setNextItemWidth(ui.availableSpaceX())
-    local cur = math.min(settings.qSeg or 1, #base.segs)
+    local cur = segIdx(base)
     ui.combo('##qseg', 'Segment: ' .. (base.segs[cur].label or ('Q' .. cur)), ui.ComboFlags.None, function()
       for k, g in ipairs(base.segs) do
         local txtLine = string.format('%s  %s  ·  %s °C / %s °C  ·  %s', g.label or ('Q' .. k), (g.local_start or ''):sub(12, 16),
           fmt(g.air_c, '%.1f'), fmt(g.track_c, '%.1f'), stateText(g))
-        if ui.selectable(txtLine, k == cur) then settings.qSeg = k end
+        if ui.selectable(txtLine, k == cur) then settings.qSeg = g.segment or k end
       end
     end)
   end
@@ -1137,6 +1462,14 @@ function windowMain(dt)
       (r.cloud_pct and string.format('  (%d%% cloud)', r.cloud_pct) or ''))
     local m = mistPct(r)
     row('Haze / mist', (m >= 1 and string.format('%d %%', math.floor(m + 0.5)) or 'none') .. (r.overridden and '  (override)' or ''))
+    row('Track grip', (r.grip_pct and string.format('%g %% (FRICTION %.2f)', r.grip_pct, r.grip_pct / 100) or 'track default') ..
+      (grip.loaded and string.format('  ·  loaded %.2f', grip.loaded) or '') .. ((grip.text ~= '' and not grip.pending) and ('  ·  ' .. grip.text) or ''))
+    if r.segLabel then row('Tyre grip', tyre.text) end
+    if grip.needsReload then
+      ui.textColored(reloadNote(), V.warn)
+      local armed = grip.confirmUntil and os.clock() < grip.confirmUntil
+      if ui.button(armed and 'Click again to reload the track' or 'Reload track', vec2(ui.availableSpaceX(), 28)) then reloadTrack() end
+    end
     if r.best_lap and r.best_lap ~= '' then row('Real best lap', r.best_lap .. '  ' .. (r.best_driver or '')) end
     row('Track', r.segLabel and (stateText(r) .. ' (fixed for the session)') or (r.rain == 1 and 'raining at start' or 'dry at start') ..
       ((r.rain_frac or 0) > 0 and string.format(', wet %d%% of session', math.floor(r.rain_frac * 100 + 0.5)) or ''))
@@ -1165,6 +1498,12 @@ function windowMain(dt)
   end)
   if autoState.reason ~= '' then ui.textColored(autoState.reason, C.muted) end
   if ui.checkbox('Show weather panel in the pits', settings.pitPanel) then settings.pitPanel = not settings.pitPanel end
+  if ui.checkbox('Show "F1 True Conditions running" watermark', settings.watermark) then settings.watermark = not settings.watermark end
+  if settings.watermark then
+    ui.setNextItemWidth(ui.availableSpaceX())
+    local v, changed = ui.slider('##wmAlpha', (settings.watermarkAlpha or 0.45) * 100, 10, 100, 'Watermark opacity: %.0f%%')
+    if changed then settings.watermarkAlpha = v / 100 end
+  end
   ui.setNextItemWidth(160)
   local ps, psChanged = ui.slider('Pit panel size##pitsize', settings.pitSize * 100, 60, 160, '%.0f%%')
   if psChanged then settings.pitSize = ps / 100 end
@@ -1196,10 +1535,33 @@ function windowMain(dt)
   if changed then settings.dbUrl = txt end
 end
 
+-- watermark: small translucent line at the top centre while F1 True Conditions drives the conditions
+drawWatermark = function()
+  local scr = ac.getUI().windowSize
+  local S = pitScale()
+  local w, h = 620 * S, 26 * S
+  local r = sync.row
+  local what = (r.display ~= nil and r.display ~= '' and r.display or r.circuit or '') .. ' ' .. tostring(r.year or '') ..
+    '  ·  ' .. (r.session or '') .. (r.segLabel and (' ' .. r.segLabel) or '')
+  local a = clamp(settings.watermarkAlpha or 0.45, 0.1, 1)
+  ui.transparentWindow('f1tcWatermark', vec2((scr.x - w) / 2, 10 * S), vec2(w, h), true, false, function()
+    pushF(F.regular)
+    ui.dwriteDrawTextClipped('TRUE CONDITIONS RUNNING  ·  ' .. what, math.floor(14 * S + 0.5), vec2(0, 0), vec2(w, h),
+      ui.Alignment.Center, ui.Alignment.Center, false, rgbm(1, 1, 1, a))
+    popF(F.regular)
+  end)
+end
+
+-- which race-menu section is open ('info'|'setup'|'telemetry'|'time'), as reported by CSP
+pcall(function() ac.onOpenMainMenu(function(section) pit.section = section end) end)
+
 -- pit overlay fallback (registered last so it sees drawPit / pitHeight)
 pcall(function()
   ui.onExclusiveHUD(function(mode)
-    if mode == 'menu' and pit.overlay and settings.pitPanel then
+    if mode == 'game' and settings.watermark and settings.autoApply and trackKnown and sync.row and not grip.needsReload then
+      drawWatermark()
+    end
+    if mode == 'menu' and pit.overlay and settings.pitPanel and pitAllowed() then
       local sz = pitSize(pitScale())
       ui.transparentWindow('f1tcPitOverlay', vec2(settings.pitX, settings.pitY), sz, true, true, function()
         drawPit(sz, true)
