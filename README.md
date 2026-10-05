@@ -68,17 +68,36 @@ the latest season available for that circuit, and the time of day is set to the 
 
 ### The pit panel
 
-In the pits (setup screen) a panel opens next to the other setup apps:
+In the pits (Setup screen, and the Info screen) a panel opens next to the other setup apps. It only shows while
+you're in the pit lane or haven't driven yet in the session:
 
+- **Header** with the country flag, circuit and Grand Prix name.
 - **One column per real session**: Sprint Q, Sprint, Qualifying, Race. Click a column header to switch.
   A red box marks the session in use.
 - **Q1 / Q2 / Q3** under Qualifying load the conditions of the **final laps** of that segment and
   show the **real best lap** as your target, e.g. Sepang 2026 Q3: *1:35.130 VER*.
-- Rows: air and track temperature, humidity, wind, sky, haze/mist, track surface (dry / damp / wet /
+- Rows: air and track temperature, humidity, wind, sky, haze/mist, track grip, track surface (dry / damp / wet /
   raining), real local time, real best lap, and whether the data is a **Forecast** or **Timing**
   (measured).
 - **On/off switch** (top right): off = the app does nothing, Pure keeps its own weather.
 - **Green footer text** = Pure Planner has confirmed it is running the conditions.
+- **Tyre grip per qualifying segment:** the track rubbers in during real qualifying, so your tyres get
+  95 % grip in Q1, 98 % in Q2 and 100 % in Q3 (also SQ1–SQ3). It switches live when you pick a segment,
+  with no reload, and only affects your car. It needs a track that allows apps to change physics
+  (`ALLOW_APPS=1` in its surfaces.ini; most current F1 track mods do). Offline only.
+- **Missing segment data:** if the timing feed has no data for a segment (e.g. Canada 2026 Q1), you can
+  still pick it. It copies the nearest segment's conditions; hover it to see where they came from.
+- **Unknown track:** if the track isn't one of the F1 circuits, the app switches itself off for that
+  session and the panel just says *Track not recognised*.
+
+While the app is running, a translucent **TRUE CONDITIONS RUNNING** line at the top of the
+screen shows the circuit, season and session in use. It only appears once the track has been loaded
+with the right grip (no *Reload track* pending). Turn it off or change its opacity in the
+main window.
+
+**Qualifying always starts on a fully rubbered track.** If Content Manager's track grip is below
+100 % in a qualifying session, the panel offers **Reload track**. The reload sets the track to
+*Optimum* (100 % grip, no grip build-up), so the grip doesn't change during your qualifying laps.
 
 The conditions are **fixed for the whole session**. Rain, track wetness and temperatures don't change
 while you drive, so every lap is comparable with the real one.
@@ -93,6 +112,7 @@ Open **F1 True Conditions** from the CSP app bar for manual control:
 - **Season**: latest (default) or a fixed year (2023 → today).
 - **Use real session date & time**: on = the sim clock jumps to the real start time (night races are
   dark). Off = keep your own time of day.
+- **Watermark** on/off and opacity.
 - **Show weather panel in the pits** and **Pit panel size** (scales with 1080p / 1440p / 4K
   automatically).
 - **Export all as presets**: saves every session as a Pure Planner preset in
@@ -128,13 +148,20 @@ itself up to date:
 - **Offline?** The app uses the last downloaded copy, or the copy bundled with the release.
 - You can turn downloads off in the main window (**Download updates at start**).
 
-### Overrides (haze and sky)
+### Overrides (haze, sky and track grip)
 
 The timing feed has no data for haze or visibility. To make the sky match reality, the maintainer
 adds manual corrections in [`data/f1_weather_overrides.csv`](data/f1_weather_overrides.csv). For example,
 2026 Sepang uses scattered clouds with 35 % mist because of the haze across Malaysia. These corrections reach
 everyone at their next game start. They only change the sky and mist. Temperatures, wind and rain
 always come from the real data. A dry-weather override never changes a rainy session.
+
+Overrides can also set the **track grip** per event, session, segment and car. The app writes it as the
+`FRICTION` of the track's road and kerb surfaces in its `surfaces.ini` (e.g. `95` → `FRICTION=0.95` for
+Sepang with the VRC Formula Alpha 2026). AC reads that file while loading the track, so **a new grip
+value is used from the next time you load the track**. Until then the *Track grip* row is red and the pit
+panel shows a **Reload track** button (click twice) that restarts AC on the same track and session. The
+original values are kept in a backup and put back when no override applies or you go online.
 
 ---
 
@@ -143,6 +170,8 @@ always come from the real data. A dry-weather override never changes a rainy ses
 | Problem | Fix |
 |---|---|
 | No panel in the pits | Check that CSP is up to date and the app is in `apps\lua\F1TrueConditions\`. Enable *Show weather panel in the pits* in the main window. |
+| *Track grip* row is red | The new grip is written to the track's surfaces.ini. Press **Reload track** in the pit panel (twice) to load it. |
+| Can't join a server after using a grip override | Load the track once offline with the app off (or a session without a grip override) — that restores the original surfaces.ini. |
 | Weather doesn't change | Weather FX must be set to **Pure** and the weather controller to **Pure Planner / Load last used plan**. Watch the panel footer: it turns green when Pure confirms. |
 | "No F1 circuit for this track" | The track's folder name isn't recognised. Use the main window to pick the circuit by hand, or report the track folder name in an issue. |
 | Two weather apps / red warning | Delete the old `apps\lua\F1RealWeather\` folder. |
@@ -171,7 +200,7 @@ OpenF1 is an unofficial project, and F1 True Conditions is not affiliated with F
 | `app/F1TrueConditions/` | App source (the release zip contains it as `apps/lua/F1TrueConditions/`) |
 | `data/f1_weather_db.csv` | One row per session, updated by the Action |
 | `data/f1_weather_segments.csv` | Q1/Q2/Q3 and SQ1–SQ3 final-lap snapshots + real best laps |
-| `data/f1_weather_overrides.csv` | Manual haze/sky corrections (`year, event, session, segment, when, pure_weather, mist_pct, note`) |
+| `data/f1_weather_overrides.csv` | Manual haze/sky corrections (`year, event, session, segment, when, car, pure_weather, mist_pct, grip_pct, surfaces, note`) |
 | `tools/update_db.py` | The updater (Python 3, no extra packages) |
 | `.github/workflows/update-f1-weather.yml` | Runs the updater every 3 hours and commits changes |
 | `SETUP.md` | Maintenance guide, column descriptions and the track temperature model |
