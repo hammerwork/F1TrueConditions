@@ -2,7 +2,8 @@
 """F1 True Conditions — database updater.
 
 Builds data/f1_weather_db.csv: one row per F1 Qualifying / Sprint Qualifying / Sprint / Race
-from 2023 to the current season, with the conditions at the start of the session.
+from 2023 to the current season, with the conditions at the start of the session, plus
+data/f1_weather_segments.csv (Q1/Q2/Q3) and data/f1_weather_practice.csv (FP1/FP2/FP3).
 
 Sources (both free, no API key):
   * OpenF1  https://openf1.org        — session calendar + official timing weather feed
@@ -82,6 +83,21 @@ SNAP_MINUTES = 5                           # segment snapshot = last 5 minutes b
 SNAP_RAIN = 0.3                            # raining in >= 30 % of those samples -> 'rain'
 SNAP_WET_MIN, SNAP_DAMP_MIN, SNAP_DRYING_MIN = 12, 25, 40   # scaled minutes since rain stopped
 BACKFILL_SECONDS = 1500                    # time budget per run for adding segments to old sessions
+
+# Free practice (FP1/FP2/FP3) goes to its own file, data/f1_weather_practice.csv, one line per part:
+#   part=fastest  conditions when the fastest lap of the session was set (+ that lap as the target)
+#   part=step     the whole session every FP_STEP_MIN minutes (step 0 = green light), for a plan that
+#                 plays the real hour with changing conditions
+#   part=none     marker: no timing data for this session (not fetched again)
+PRACTICE = ('Practice 1', 'Practice 2', 'Practice 3')
+FP_STEP_MIN = 10
+FP_STEP_WINDOW = 5                         # minutes either side of a step used for its median
+FP_FASTEST_FORECAST_MIN = 40               # forecasts: fastest laps usually come ~40 min in
+FP_BACKFILL_SECONDS = 1200                 # time budget per run for practice sessions without data yet
+FP_COLUMNS = ['year', 'round', 'meeting', 'circuit', 'country', 'session', 'session_key', 'gmt_offset', 'display',
+              'track_keywords', 'part', 'step', 'local_start', 'utc_start', 'stamp_ts', 'air_c', 'track_c',
+              'humidity_pct', 'pressure_hpa', 'wind_kmh', 'wind_dir_deg', 'rain', 'rain_frac', 'cloud_pct',
+              'precip_mm', 'track_state', 'pure_weather', 'best_lap', 'best_lap_s', 'best_driver', 'source']
 
 COLUMNS = ['year', 'round', 'meeting', 'circuit', 'country', 'session', 'local_start', 'utc_start',
            'gmt_offset', 'stamp_ts', 'air_c', 'track_c', 'humidity_pct', 'pressure_hpa', 'wind_kmh',
@@ -477,6 +493,193 @@ def forecast_segments(s, parent, rnd_meeting):
     return out
 
 
+# --------------------------------------------------------------------------------------------- practice
+def meteo_series(lat, lon, t_from, t_to, forecast):
+    """Hourly Open-Meteo values between two UTC times: {datetime (UTC hour): {field: value}}."""
+    if lat is None:
+        return {}
+    params = {'latitude': lat, 'longitude': lon, 'start_date': t_from.strftime('%Y-%m-%d'),
+              'end_date': t_to.strftime('%Y-%m-%d'), 'timezone': 'GMT',
+              'hourly': 'temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,'
+                        'cloud_cover,precipitation,shortwave_radiation,surface_pressure'
+                        + (',precipitation_probability' if forecast else '')}
+    for base in ([FORECAST] if forecast else [ARCHIVE, FORECAST]):
+        try:
+            h = get_json(base, params).get('hourly') or {}
+            out = {}
+            for i, ts in enumerate(h.get('time') or []):
+                vals = {k: (h[k][i] if h.get(k) else None) for k in h if k != 'time'}
+                if vals.get('temperature_2m') is not None:
+                    out[datetime.fromisoformat(ts).replace(tzinfo=timezone.utc)] = vals
+            if out and any(v.get('cloud_cover') is not None for v in out.values()):
+                return out
+        except Exception as e:
+            print(f'  open-meteo {base} failed: {e}', file=sys.stderr)
+        time.sleep(0.2)
+    return {}
+
+
+def meteo_at(series, t, key, interp=True):
+    """Value of `key` at UTC time t: linear between the two hours around t (nearest hour if interp=False)."""
+    h0 = t.replace(minute=0, second=0, microsecond=0)
+    a, b = series.get(h0, {}).get(key), series.get(h0 + timedelta(hours=1), {}).get(key)
+    if not interp or a is None or b is None:
+        near = h0 + timedelta(hours=1) if t - h0 >= timedelta(minutes=30) else h0
+        v = series.get(near, {}).get(key)
+        return v if v is not None else (a if a is not None else b)
+    return a + (b - a) * (t - h0).total_seconds() / 3600
+
+
+def fp_part(meta, gmt_offset, t, part, step, **vals):
+    local, stamp = local_from_utc(t, gmt_offset)
+    row = dict(meta, part=part, step=step, local_start=local, utc_start=t.strftime('%Y-%m-%dT%H:%M:%SZ'),
+               stamp_ts=stamp)
+    row.update(vals)
+    return row
+
+
+def fp_meta(s, meeting, rnd):
+    row, latlon, utc = base_row(s, meeting, rnd)
+    meta = {k: row[k] for k in ('year', 'round', 'meeting', 'circuit', 'country', 'session', 'session_key',
+                                'gmt_offset', 'display', 'track_keywords')}
+    end = parse_time(s['date_end']) if s.get('date_end') else utc + timedelta(minutes=60)
+    return meta, latlon, utc, end
+
+
+def fp_step_times(start, end):
+    out, t = [], start
+    while t <= end + timedelta(seconds=1):
+        out.append(t)
+        t += timedelta(minutes=FP_STEP_MIN)
+    return out
+
+
+def timing_practice(s, meeting, rnd):
+    """FP from the timing weather feed: the fastest-lap snapshot and the session every 10 minutes.
+    Returns [] if the feed has no data (yet)."""
+    meta, (lat, lon), start, end = fp_meta(s, meeting, rnd)
+    w = openf1('weather', session_key=s['session_key'])
+    if not w:
+        return []
+    samples = sorted(((parse_time(x['date']), x) for x in w), key=lambda t: t[0])
+    series = meteo_series(lat, lon, start - timedelta(hours=1), end + timedelta(hours=1), forecast=False)
+
+    def conditions(t0, t1, t_ref):
+        snap = [x for t, x in samples if t0 <= t <= t1]
+        if len(snap) < 2:          # gap in the feed: nearest samples
+            snap = [x for _, x in sorted(samples, key=lambda tx: abs((tx[0] - t_ref).total_seconds()))[:3]]
+        f = lambda k: [x.get(k) for x in snap if x.get(k) is not None]
+        air, track = r1(median(f('air_temperature'))), r1(median(f('track_temperature')))
+        if air is None or track is None:
+            return None
+        rain = sum(1 for x in f('rainfall') if x > 0) / len(snap)
+        cloud = meteo_at(series, t_ref, 'cloud_cover', interp=False)
+        precip = meteo_at(series, t_ref, 'precipitation', interp=False)
+        hum = median(f('humidity'))
+        if rain >= SNAP_RAIN:
+            state, pw = 'rain', (7 if rain >= SEG_RAIN_HEAVY and (precip or 0) >= 1.0 else 6)
+        else:
+            last = max((t for t, x in samples if t <= t_ref and (x.get('rainfall') or 0) > 0), default=None)
+            state = track_state_after_rain((t_ref - last).total_seconds() / 60 if last else None, track)
+            pw = pure_weather(False, False, cloud, precip, hum)
+            if state != 'dry' and pw in (15, 16, 23):
+                pw = 18                    # a track still wet from rain: not under a clear sky
+        wind_ms = median(f('wind_speed'))
+        return {'air_c': air, 'track_c': track, 'humidity_pct': r1(hum), 'pressure_hpa': r1(median(f('pressure'))),
+                'wind_kmh': r1(wind_ms * 3.6) if wind_ms is not None else '',
+                'wind_dir_deg': circular_mean(f('wind_direction')) if f('wind_direction') else '',
+                'rain': 1 if state == 'rain' else 0, 'rain_frac': round(rain, 2),
+                'cloud_pct': cloud if cloud is not None else '', 'precip_mm': precip if precip is not None else '',
+                'track_state': state, 'pure_weather': pw, 'source': 'timing'}
+
+    out = []
+    win = timedelta(minutes=FP_STEP_WINDOW)
+    for i, t in enumerate(fp_step_times(start, end)):
+        c = conditions(t - win, t + win, t)
+        if c:
+            out.append(fp_part(meta, s['gmt_offset'], t, 'step', i, **c))
+    if not out:
+        return []
+    # fastest lap of the session (out-laps excluded): conditions from 3 min before it to its end
+    best = None
+    try:
+        laps = openf1('laps', session_key=s['session_key'])
+        for lap in laps:
+            d, ls = lap.get('lap_duration'), lap.get('date_start')
+            if d and ls and not lap.get('is_pit_out_lap') and (best is None or d < best[0]):
+                best = (d, parse_time(ls), lap.get('driver_number'))
+        drv = ''
+        if best:
+            drivers = {x['driver_number']: x.get('name_acronym') or str(x['driver_number'])
+                       for x in openf1('drivers', session_key=s['session_key'])}
+            drv = drivers.get(best[2], '')
+    except Exception as e:
+        print(f'  laps unavailable: {e}', file=sys.stderr)
+        best, drv = None, ''
+    if best:
+        t = best[1]
+        c = conditions(t - timedelta(minutes=3), t + timedelta(seconds=best[0] + 60), t)
+        lap = {'best_lap': fmt_lap(best[0]), 'best_lap_s': round(best[0], 3), 'best_driver': drv}
+    else:
+        t = start + timedelta(minutes=FP_FASTEST_FORECAST_MIN)
+        c = conditions(t - win, t + win, t)
+        lap = {}
+    if c:
+        out.insert(0, fp_part(meta, s['gmt_offset'], t, 'fastest', 0, **c, **lap))
+    return out
+
+
+def forecast_practice(s, meeting, rnd):
+    """Upcoming FP: Open-Meteo forecast (interpolated between hours) for the steps and the fastest laps."""
+    meta, (lat, lon), start, end = fp_meta(s, meeting, rnd)
+    series = meteo_series(lat, lon, start - timedelta(hours=1), end + timedelta(hours=1), forecast=True)
+    if not series:
+        return []
+
+    def conditions(t, was_wet):
+        air = meteo_at(series, t, 'temperature_2m')
+        if air is None:
+            return None
+        sw = meteo_at(series, t, 'shortwave_radiation') or 0
+        precip = meteo_at(series, t, 'precipitation', interp=False) or 0
+        prob = meteo_at(series, t, 'precipitation_probability', interp=False)
+        cloud = meteo_at(series, t, 'cloud_cover', interp=False)
+        hum = meteo_at(series, t, 'relative_humidity_2m')
+        wet = precip >= 0.3 and (prob is None or prob >= RAIN_PROB_MIN)
+        wdir = meteo_at(series, t, 'wind_direction_10m', interp=False)
+        return {'air_c': r1(air), 'track_c': r1(air + (TRACK_WET if wet else TRACK_A + TRACK_B * sw)),
+                'humidity_pct': r1(hum), 'pressure_hpa': r1(meteo_at(series, t, 'surface_pressure')),
+                'wind_kmh': r1(meteo_at(series, t, 'wind_speed_10m')),
+                'wind_dir_deg': round(wdir) if wdir is not None else '', 'rain': 1 if wet else 0, 'rain_frac': '',
+                'cloud_pct': cloud if cloud is not None else '', 'precip_mm': precip,
+                'track_state': 'rain' if wet else ('damp' if was_wet else 'dry'),
+                'pure_weather': (6 if precip < 2.5 else 7 if precip < 7.5 else 8) if wet
+                                else pure_weather(False, False, cloud, precip, hum),
+                'source': 'forecast'}
+
+    out, was_wet = [], False
+    for i, t in enumerate(fp_step_times(start, end)):
+        c = conditions(t, was_wet)
+        if c:
+            was_wet = was_wet or c['rain'] == 1
+            out.append(fp_part(meta, s['gmt_offset'], t, 'step', i, **c))
+    t = start + timedelta(minutes=FP_FASTEST_FORECAST_MIN)
+    wet_before = any(x['rain'] == 1 for x in out if parse_time(x['utc_start']) < t)
+    c = conditions(t, wet_before)
+    if c and out:
+        out.insert(0, fp_part(meta, s['gmt_offset'], t, 'fastest', 0, **c))
+    return out
+
+
+def write_csv(path, columns, rows):
+    with open(path + '.tmp', 'w', newline='', encoding='utf-8') as f:
+        w = csv.DictWriter(f, fieldnames=columns, lineterminator='\n', extrasaction='ignore')
+        w.writeheader()
+        for x in rows:
+            w.writerow({k: ('' if x.get(k) is None else x.get(k)) for k in columns})
+    os.replace(path + '.tmp', path)
+
+
 # --------------------------------------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser()
@@ -501,15 +704,25 @@ def main():
                 if r.get('source') == 'timing':
                     kept_segs.setdefault(int(r['session_key']), []).append(r)
 
+    fp_out = os.path.join(os.path.dirname(out), 'f1_weather_practice.csv')
+    kept_fp = {}
+    if os.path.exists(fp_out) and not args.full:
+        with open(fp_out, newline='', encoding='utf-8') as f:
+            for r in csv.DictReader(f):
+                if r.get('source') == 'timing' and r.get('session_key'):
+                    kept_fp.setdefault(int(r['session_key']), []).append(r)
+
     now = parse_time(args.now) if args.now else datetime.now(timezone.utc)
     t_begin = time.time()
     rows, segs, backfill = [], [], []
-    counts = {'kept': 0, 'timing': 0, 'forecast': 0, 'pending': 0, 'segments': 0, 'segment_backfill_left': 0}
+    fp_rows, fp_todo = [], []
+    counts = {'kept': 0, 'timing': 0, 'forecast': 0, 'pending': 0, 'segments': 0, 'segment_backfill_left': 0,
+              'practice_kept': 0, 'practice_new': 0, 'practice_forecast': 0, 'practice_left': 0}
     for year in range(FIRST_YEAR, now.year + 1):
         meetings = {m['meeting_key']: m for m in openf1('meetings', year=year)}
-        sessions = [s for s in openf1('sessions', year=year)
-                    if s['session_name'] in SESSIONS and not s.get('is_cancelled')
-                    and 'testing' not in (meetings.get(s['meeting_key'], {}).get('meeting_name') or '').lower()]
+        all_sessions = [s for s in openf1('sessions', year=year) if not s.get('is_cancelled')
+                        and 'testing' not in (meetings.get(s['meeting_key'], {}).get('meeting_name') or '').lower()]
+        sessions = [s for s in all_sessions if s['session_name'] in SESSIONS]
         # round = order of (non-cancelled) Grand Prix weekends in the season
         order = sorted({s['meeting_key'] for s in sessions}, key=lambda k: min(x['date_start'] for x in sessions if x['meeting_key'] == k))
         rnd = {k: i + 1 for i, k in enumerate(order)}
@@ -552,6 +765,23 @@ def main():
             elif start > now:
                 counts['pending'] += 1
 
+        # free practice: kept as measured, otherwise queued (timing data, or a forecast if upcoming)
+        for s in all_sessions:
+            if s['session_name'] not in PRACTICE or s['meeting_key'] not in rnd:
+                continue
+            key, m = s['session_key'], meetings.get(s['meeting_key'], {})
+            if key in kept_fp:
+                disp, _, _, kw = circuit_info(s['circuit_short_name'], s.get('location'), s.get('country_name'))
+                for r in kept_fp[key]:
+                    r['round'] = rnd[s['meeting_key']]
+                    r['display'], r['track_keywords'] = r.get('display') or disp, r.get('track_keywords') or kw
+                fp_rows += kept_fp[key]; counts['practice_kept'] += 1
+                continue
+            start = parse_time(s['date_start'])
+            end = parse_time(s['date_end']) if s.get('date_end') else start + timedelta(hours=1)
+            if start <= now + timedelta(days=FORECAST_DAYS):
+                fp_todo.append((s, m, rnd[s['meeting_key']], start, end))
+
     # add Q1/Q2/Q3 to older sessions (first runs after the feature was added), newest first
     backfill.sort(key=lambda sr: sr[0]['date_start'], reverse=True)
     for i, (s, r) in enumerate(backfill):
@@ -570,6 +800,38 @@ def main():
             new.append({'session_key': s['session_key'], 'segment': 0, 'utc_start': s['date_start'], 'source': 'timing'})
         segs += new; counts['segments'] += len(new)
 
+    # free practice, newest first: measured data for finished sessions (within a time budget, so the
+    # first runs fill in 2023-2026 over a few runs), forecasts for upcoming ones
+    fp_todo.sort(key=lambda x: x[3], reverse=True)
+    fp_begin = time.time()
+    for i, (s, m, rn, start, end) in enumerate(fp_todo):
+        tag = f'{s["year"]} {s["circuit_short_name"]} {s["session_name"]}'
+        new = []
+        if end <= now:
+            if time.time() - fp_begin > FP_BACKFILL_SECONDS:
+                counts['practice_left'] += 1
+                if end < now - timedelta(days=2):
+                    continue
+            else:
+                print(f'{tag}: practice timing data', file=sys.stderr)
+                try:
+                    new = timing_practice(s, m, rn)
+                except Exception as e:
+                    print(f'  failed: {e}', file=sys.stderr); continue      # retried next run
+                if new:
+                    counts['practice_new'] += 1
+                elif end < now - timedelta(days=2):
+                    # no timing data long after the session: marker so it isn't fetched every run
+                    meta = fp_meta(s, m, rn)[0]
+                    new = [dict(meta, part='none', step=0, utc_start=start.strftime('%Y-%m-%dT%H:%M:%SZ'), source='timing')]
+        if not new and end >= now - timedelta(days=2):
+            print(f'{tag}: practice forecast', file=sys.stderr)
+            new = forecast_practice(s, m, rn)
+            if new: counts['practice_forecast'] += 1
+        fp_rows += new
+    write_csv(fp_out, FP_COLUMNS, sorted(fp_rows, key=lambda x: (str(x['utc_start'])[:10], str(x.get('session')),
+                                                                 str(x.get('part')) != 'fastest', int(x.get('step') or 0))))
+
     rows.sort(key=lambda r: (int(r['year']), int(r['round']), SESSION_ORDER.get(r['session'], 9)))
     os.makedirs(os.path.dirname(out), exist_ok=True)
     tmp = out + '.tmp'
@@ -587,7 +849,8 @@ def main():
         for x in segs:
             w.writerow({k: ('' if x.get(k) is None else x.get(k)) for k in SEG_COLUMNS})
     os.replace(seg_out + '.tmp', seg_out)
-    print(f'wrote {len(rows)} sessions to {out} and {len(segs)} qualifying segments ({counts})', file=sys.stderr)
+    print(f'wrote {len(rows)} sessions to {out}, {len(segs)} qualifying segments and {len(fp_rows)} practice '
+          f'lines ({counts})', file=sys.stderr)
 
 
 if __name__ == '__main__':
