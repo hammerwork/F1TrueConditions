@@ -225,5 +225,5 @@ year,round,meeting,circuit,country,session,local_start,utc_start,gmt_offset,stam
 2026,18,United States Grand Prix,Austin,United States,Race,2026-10-25 15:00,2026-10-25T20:00:00Z,-05:00,1792940400,26.7,36.7,44.1,1004.5,7.9,131,0,0.0,100,0.0,19,26.6,27.6,,39.3,11396,timing,Austin (COTA),austin;cota;americas
 2026,19,Mexico City Grand Prix,Mexico City,Mexico,Qualifying,2026-10-31 15:00,2026-10-31T21:00:00Z,-06:00,1793458800,24.6,41.8,38,788.8,7.0,337,0,,29,0,16,,,,,11400,forecast,Mexico City,mexico;hermanos
 2026,19,Mexico City Grand Prix,Mexico City,Mexico,Race,2026-11-01 14:00,2026-11-01T20:00:00Z,-06:00,1793541600,25.0,44.6,33,790.5,5.0,341,0,,0,0,15,,,,,11404,forecast,Mexico City,mexico;hermanos
-2026,20,São Paulo Grand Prix,Interlagos,Brazil,Qualifying,2026-11-07 15:00,2026-11-07T18:00:00Z,-03:00,1794063600,16.9,25.3,97,929.2,13.3,139,0,,100,1.0,19,,,,,11408,forecast,Interlagos,interlagos;sao_paulo;saopaulo;brazil
+2026,20,São Paulo Grand Prix,Interlagos,Brazil,Qualifying,2026-11-07 15:00,2026-11-07T18:00:00Z,-03:00,1794063600,16.9,20.4,97,929.2,13.3,139,1,,100,1.0,6,,,,,11408,forecast,Interlagos,interlagos;sao_paulo;saopaulo;brazil
 2026,20,São Paulo Grand Prix,Interlagos,Brazil,Race,2026-11-08 14:00,2026-11-08T17:00:00Z,-03:00,1794146400,21.3,34.7,89,928.9,5.4,188,0,,99,2.0,19,,,,,11412,forecast,Interlagos,interlagos;sao_paulo;saopaulo;brazil
