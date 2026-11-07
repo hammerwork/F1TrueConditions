@@ -2,7 +2,10 @@ name: Update F1 True Conditions database
 
 on:
   schedule:
-    - cron: '17 */3 * * *'     # every 3 hours (UTC): new sessions, fresher forecasts
+    # every hour (UTC). OpenF1 is locked while any F1 session is live (and shortly before), so on race
+    # weekends many runs find it locked and stop without changes in a few seconds; hourly runs make
+    # sure one lands in the gap after each session. GitHub also sometimes delays or skips scheduled runs.
+    - cron: '17 * * * *'
   workflow_dispatch:           # "Run workflow" button in the Actions tab
 
 permissions:
