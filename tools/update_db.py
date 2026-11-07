@@ -126,8 +126,17 @@ def get_json(url, params=None, tries=6):
             raise
 
 
+class OpenF1Locked(Exception):
+    """OpenF1 refuses all requests without an API key while an F1 session is live (HTTP 401)."""
+
+
 def openf1(path, **params):
-    data = get_json(f'{OPENF1}/{path}', params)
+    try:
+        data = get_json(f'{OPENF1}/{path}', params)
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise OpenF1Locked(f'{path}: HTTP {e.code}') from e
+        raise
     time.sleep(0.6)               # stay well under OpenF1's free rate limit
     return data
 
@@ -411,13 +420,11 @@ def timing_segments(s, parent, weather=None):
     if not w:
         return []
     samples = sorted(((parse_time(x['date']), x) for x in w), key=lambda t: t[0])
-    try:
-        laps = openf1('laps', session_key=s['session_key'])
-        drivers = {d['driver_number']: d.get('name_acronym') or str(d['driver_number'])
-                   for d in openf1('drivers', session_key=s['session_key'])}
-    except Exception as e:
-        print(f'  laps unavailable: {e}', file=sys.stderr)
-        laps, drivers = [], {}
+    # no try/except: if the lap data can't be downloaded (e.g. OpenF1 locked during a live session) the
+    # segments are not stored without their best laps, they're fetched again on the next run
+    laps = openf1('laps', session_key=s['session_key'])
+    drivers = {d['driver_number']: d.get('name_acronym') or str(d['driver_number'])
+               for d in openf1('drivers', session_key=s['session_key'])}
     segs = []
     for p in sorted(greens):
         t0 = greens[p]
@@ -601,21 +608,19 @@ def timing_practice(s, meeting, rnd):
     if not out:
         return []
     # fastest lap of the session (out-laps excluded): conditions from 3 min before it to its end
+    # no try/except: a failed lap download (e.g. OpenF1 locked during a live session) must not store the
+    # session without its fastest lap; it is fetched again on the next run
     best = None
-    try:
-        laps = openf1('laps', session_key=s['session_key'])
-        for lap in laps:
-            d, ls = lap.get('lap_duration'), lap.get('date_start')
-            if d and ls and not lap.get('is_pit_out_lap') and (best is None or d < best[0]):
-                best = (d, parse_time(ls), lap.get('driver_number'))
-        drv = ''
-        if best:
-            drivers = {x['driver_number']: x.get('name_acronym') or str(x['driver_number'])
-                       for x in openf1('drivers', session_key=s['session_key'])}
-            drv = drivers.get(best[2], '')
-    except Exception as e:
-        print(f'  laps unavailable: {e}', file=sys.stderr)
-        best, drv = None, ''
+    laps = openf1('laps', session_key=s['session_key'])
+    for lap in laps:
+        d, ls = lap.get('lap_duration'), lap.get('date_start')
+        if d and ls and not lap.get('is_pit_out_lap') and (best is None or d < best[0]):
+            best = (d, parse_time(ls), lap.get('driver_number'))
+    drv = ''
+    if best:
+        drivers = {x['driver_number']: x.get('name_acronym') or str(x['driver_number'])
+                   for x in openf1('drivers', session_key=s['session_key'])}
+        drv = drivers.get(best[2], '')
     if best:
         t = best[1]
         c = conditions(t - timedelta(minutes=3), t + timedelta(seconds=best[0] + 60), t)
@@ -626,6 +631,8 @@ def timing_practice(s, meeting, rnd):
         lap = {}
     if c:
         out.insert(0, fp_part(meta, s['gmt_offset'], t, 'fastest', 0, **c, **lap))
+    if not best:      # the feed really has no laps: marker, so the session isn't fetched again every run
+        out.append(dict(meta, part='nolap', step=0, utc_start=start.strftime('%Y-%m-%dT%H:%M:%SZ'), source='timing'))
     return out
 
 
@@ -715,7 +722,7 @@ def main():
     now = parse_time(args.now) if args.now else datetime.now(timezone.utc)
     t_begin = time.time()
     rows, segs, backfill = [], [], []
-    fp_rows, fp_todo = [], []
+    fp_rows, fp_todo, fp_old = [], [], {}
     counts = {'kept': 0, 'timing': 0, 'forecast': 0, 'pending': 0, 'segments': 0, 'segment_backfill_left': 0,
               'practice_kept': 0, 'practice_new': 0, 'practice_forecast': 0, 'practice_left': 0}
     for year in range(FIRST_YEAR, now.year + 1):
@@ -738,11 +745,13 @@ def main():
                 rows.append(r); counts['kept'] += 1
                 if s['session_name'] in QUALI:
                     nums = {int(x['segment']) for x in kept_segs.get(key, [])}
-                    if key in kept_segs and (nums >= {1, 2, 3} or 0 in nums or not nums & {2, 3}):
+                    no_laps = nums and 0 not in nums and not any(x.get('best_lap') for x in kept_segs[key])
+                    if key in kept_segs and (nums >= {1, 2, 3} or 0 in nums or not nums & {2, 3}) and not no_laps:
                         segs += kept_segs[key]
                     else:
-                        # never looked up, or Q2/Q3 found but Q1 missing (fixed by infer_phases): fetch again
-                        backfill.append((s, r))                 # segments added below, within the time budget
+                        # never looked up, Q2/Q3 found but Q1 missing (fixed by infer_phases), or stored without
+                        # best laps (lap download failed back then): fetch again
+                        backfill.append((s, r, kept_segs.get(key, [])))   # segments added below, within the time budget
                 continue
             row = None
             if start <= now:
@@ -758,7 +767,12 @@ def main():
                 rows.append(row)
                 if s['session_name'] in QUALI:
                     if row['source'] == 'timing':
-                        new = timing_segments(s, row, row.get('_weather'))
+                        try:
+                            new = timing_segments(s, row, row.get('_weather'))
+                        except OpenF1Locked:
+                            raise
+                        except Exception as e:      # stored without segments: added on a later run
+                            print(f'  segments failed: {e}', file=sys.stderr); new = []
                     else:
                         new = forecast_segments(s, row, rnd[s['meeting_key']])
                     segs += new; counts['segments'] += len(new)
@@ -770,6 +784,11 @@ def main():
             if s['session_name'] not in PRACTICE or s['meeting_key'] not in rnd:
                 continue
             key, m = s['session_key'], meetings.get(s['meeting_key'], {})
+            fast = next((r for r in kept_fp.get(key, []) if r.get('part') == 'fastest'), None)
+            if fast is not None and not fast.get('best_lap') and not any(r.get('part') == 'nolap' for r in kept_fp[key]):
+                # stored without its fastest lap (lap download failed back then): fetch again
+                print(f'{year} {s["circuit_short_name"]} {s["session_name"]}: fastest lap missing, fetching again', file=sys.stderr)
+                fp_old[key] = kept_fp.pop(key)
             if key in kept_fp:
                 disp, _, _, kw = circuit_info(s['circuit_short_name'], s.get('location'), s.get('country_name'))
                 for r in kept_fp[key]:
@@ -784,18 +803,21 @@ def main():
 
     # add Q1/Q2/Q3 to older sessions (first runs after the feature was added), newest first
     backfill.sort(key=lambda sr: sr[0]['date_start'], reverse=True)
-    for i, (s, r) in enumerate(backfill):
+    for i, (s, r, old) in enumerate(backfill):
         if time.time() - t_begin > BACKFILL_SECONDS:
             counts['segment_backfill_left'] = len(backfill) - i
+            for _, _, o in backfill[i:]:
+                segs += o                                  # keep what was stored until it's fetched again
             break
         print(f'{s["year"]} {s["circuit_short_name"]} {s["session_name"]}: segments', file=sys.stderr)
         try:
             new = timing_segments(s, r)
         except Exception as e:
-            print(f'  failed: {e}', file=sys.stderr); continue      # retried next run
+            print(f'  failed: {e}', file=sys.stderr); segs += old; continue      # retried next run
         if not new:   # no Q1/Q2/Q3 in race control: remember that, so it isn't fetched again every run
             new = [{'session_key': s['session_key'], 'segment': 0, 'utc_start': s['date_start'], 'source': 'timing'}]
-        elif {x['segment'] for x in new} != {1, 2, 3}:
+        elif {x['segment'] for x in new} != {1, 2, 3} or not any(x.get('best_lap') for x in new):
+            # (also when the feed has no laps at all: don't look it up again every run)
             # still incomplete (segment really missing from the feed): marker row so it isn't retried every run
             new.append({'session_key': s['session_key'], 'segment': 0, 'utc_start': s['date_start'], 'source': 'timing'})
         segs += new; counts['segments'] += len(new)
@@ -811,19 +833,24 @@ def main():
             if time.time() - fp_begin > FP_BACKFILL_SECONDS:
                 counts['practice_left'] += 1
                 if end < now - timedelta(days=2):
+                    fp_rows += fp_old.get(s['session_key'], [])
                     continue
             else:
                 print(f'{tag}: practice timing data', file=sys.stderr)
                 try:
                     new = timing_practice(s, m, rn)
                 except Exception as e:
-                    print(f'  failed: {e}', file=sys.stderr); continue      # retried next run
+                    print(f'  failed: {e}', file=sys.stderr)                 # retried next run
+                    fp_rows += fp_old.get(s['session_key'], [])
+                    continue
                 if new:
                     counts['practice_new'] += 1
                 elif end < now - timedelta(days=2):
                     # no timing data long after the session: marker so it isn't fetched every run
                     meta = fp_meta(s, m, rn)[0]
                     new = [dict(meta, part='none', step=0, utc_start=start.strftime('%Y-%m-%dT%H:%M:%SZ'), source='timing')]
+        if not new and s['session_key'] in fp_old:
+            new = fp_old[s['session_key']]                 # refetch failed / not reached: keep what was stored
         if not new and end >= now - timedelta(days=2):
             print(f'{tag}: practice forecast', file=sys.stderr)
             new = forecast_practice(s, m, rn)
@@ -854,4 +881,10 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except OpenF1Locked as e:
+        # an F1 session is live: OpenF1 needs an API key until it ends. Nothing is written, so nothing
+        # half-finished is stored; the next scheduled run picks everything up.
+        print(f'OpenF1 is locked during a live session ({e}): no changes this run.', file=sys.stderr)
+        sys.exit(0)
