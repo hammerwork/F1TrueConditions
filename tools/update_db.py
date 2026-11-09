@@ -734,9 +734,15 @@ def fill_sectors(segs, fp_rows, budget_s=SECTOR_SECONDS):
                 (not x.get('sector_src') or (x.get('sector_src') == 'timing' and not x.get('best_driver_name'))):
             todo.setdefault(str(x['session_key']), []).append(('fp', x))
     begin, done = time.time(), 0
-    for key, items in sorted(todo.items(), key=lambda kv: max(str(x.get('utc_start')) for _, x in kv[1]), reverse=True):
+    if todo:
+        print(f'sector times: {len(todo)} sessions to add (up to {budget_s // 60} min this run, newest first)', file=sys.stderr)
+    for n, (key, items) in enumerate(sorted(todo.items(), key=lambda kv: max(str(x.get('utc_start')) for _, x in kv[1]), reverse=True)):
         if time.time() - begin > budget_s:
+            print(f'sector times: time budget used, {len(todo) - n} sessions left for the next runs', file=sys.stderr)
             break
+        x0 = items[0][1]
+        print(f'  sector times {n + 1}/{len(todo)}: session {key} {x0.get("circuit") or ""} {x0.get("session") or x0.get("label") or ""}'.rstrip(),
+              file=sys.stderr)
         try:
             laps = openf1('laps', session_key=int(key))
             drivers = driver_table(int(key))
@@ -771,6 +777,130 @@ def fill_sectors(segs, fp_rows, budget_s=SECTOR_SECONDS):
                 pick = None                            # not the same lap: don't guess
             x.update(lap_extras(pick, drivers) if pick else {'sector_src': 'none'})
             done += 1
+    return done
+
+
+# --------------------------------------------------------------------------------------------- sector lines
+# data/f1_sector_lines.csv: where the real F1 sector lines are, per circuit and year, as a share of the lap
+# distance (0..1 from the start/finish line). Measured from OpenF1: the car's position (location, ~4 Hz)
+# at the moment its official S1 and S2 times ended, on the fastest laps of the weekend (median).
+# Used by True Timer (standalone, or with True Conditions); the weather files are not touched.
+LINE_COLUMNS = ['year', 'circuit', 'display', 'track_keywords', 's1', 's2', 'laps', 'spread', 'length_m',
+                'session_key', 'session', 'utc_start']
+LINE_SESSIONS = ['Qualifying', 'Sprint Qualifying', 'Sprint Shootout', 'Race', 'Sprint']
+LINE_LAPS = 5                    # fastest laps measured per event
+LINE_SECONDS = 600               # time budget per run (first runs fill in 2023-2026)
+
+
+def lap_line_fractions(session_key, lap):
+    """(s1, s2, length) for one lap: share of the lap distance where sector 1 and 2 ended."""
+    t0 = parse_time(lap['date_start'])
+    dur, s1, s2 = lap['lap_duration'], lap['duration_sector_1'], lap['duration_sector_2']
+    t1 = t0 + timedelta(seconds=dur)
+    iso = lambda t: t.strftime('%Y-%m-%dT%H:%M:%S.%f')
+    loc = openf1('location', session_key=session_key, driver_number=lap['driver_number'],
+                 **{'date>': iso(t0 - timedelta(seconds=2)), 'date<': iso(t1 + timedelta(seconds=2))})
+    pts = sorted((parse_time(p['date']).timestamp(), p['x'], p['y']) for p in loc
+                 if p.get('x') is not None and p.get('y') is not None)
+    if len(pts) < 0.5 * dur * 3:          # ~3.7 samples a second; too many gaps: skip the lap
+        return None
+    dist = [0.0]
+    for i in range(1, len(pts)):
+        dist.append(dist[-1] + ((pts[i][1] - pts[i - 1][1]) ** 2 + (pts[i][2] - pts[i - 1][2]) ** 2) ** 0.5)
+
+    def at(t):
+        if t < pts[0][0] or t > pts[-1][0]:
+            return None
+        for i in range(1, len(pts)):
+            if pts[i][0] >= t:
+                f = (t - pts[i - 1][0]) / max(1e-6, pts[i][0] - pts[i - 1][0])
+                return dist[i - 1] + (dist[i] - dist[i - 1]) * f
+        return None
+    a, b = at(t0.timestamp()), at(t0.timestamp() + s1)
+    c, e = at(t0.timestamp() + s1 + s2), at(t1.timestamp())
+    if None in (a, b, c, e) or e - a <= 0:
+        return None
+    f1, f2 = (b - a) / (e - a), (c - a) / (e - a)
+    if not (0.05 < f1 < f2 < 0.95):
+        return None
+    return f1, f2, (e - a) / 10          # OpenF1 x/y are in decimetres
+
+
+def measure_lines(s):
+    """Sector lines of one session from its fastest laps; None if it has no usable laps."""
+    laps = [l for l in openf1('laps', session_key=s['session_key'])
+            if l.get('lap_duration') and l.get('date_start') and not l.get('is_pit_out_lap')
+            and all(isinstance(l.get(f'duration_sector_{i}'), (int, float)) and l[f'duration_sector_{i}'] > 0 for i in (1, 2, 3))]
+    if not laps:
+        return None
+    laps.sort(key=lambda l: l['lap_duration'])
+    fast = [l for l in laps if l['lap_duration'] <= laps[0]['lap_duration'] * 1.05][:LINE_LAPS + 3]
+    res = []
+    for lap in fast:
+        r = lap_line_fractions(s['session_key'], lap)
+        if r:
+            res.append(r)
+        if len(res) >= LINE_LAPS:
+            break
+    if len(res) < 2:
+        return None
+    f1s, f2s = [r[0] for r in res], [r[1] for r in res]
+    return {'s1': round(median(f1s), 5), 's2': round(median(f2s), 5), 'laps': len(res),
+            'spread': round(max(max(f1s) - min(f1s), max(f2s) - min(f2s)), 5),
+            'length_m': round(median([r[2] for r in res]))}
+
+
+def update_lines(path, rows, now, budget_s=LINE_SECONDS):
+    """Measure the sector lines of every weekend not measured yet (newest first, within a time budget)."""
+    kept = {}
+    if os.path.exists(path):
+        with open(path, newline='', encoding='utf-8') as f:
+            for r in csv.DictReader(f):
+                kept[(r['year'], r['circuit'])] = r
+    events = {}
+    for r in rows:
+        if r.get('source') != 'timing' or r.get('session') not in LINE_SESSIONS or not r.get('session_key'):
+            continue
+        events.setdefault((str(r['year']), r['circuit']), []).append(r)
+    todo = []
+    for key, sess in events.items():
+        old = kept.get(key)
+        if old and (old.get('s1') or parse_time(old['utc_start']) < now - timedelta(days=2)):
+            continue                                   # measured, or nothing usable long ago: done
+        sess.sort(key=lambda r: LINE_SESSIONS.index(r['session']))
+        todo.append((key, sess))
+    todo.sort(key=lambda kv: max(str(r['utc_start']) for r in kv[1]), reverse=True)
+    begin, done = time.time(), 0
+    if todo:
+        print(f'sector lines: {len(todo)} events to measure (up to {budget_s // 60} min this run, newest first)', file=sys.stderr)
+    for n, (key, sess) in enumerate(todo):
+        if time.time() - begin > budget_s:
+            print(f'sector lines: time budget used, {len(todo) - n} events left for the next runs', file=sys.stderr)
+            break
+        print(f'  sector lines {n + 1}/{len(todo)}: {key[0]} {key[1]}', file=sys.stderr)
+        got, used = None, sess[0]
+        for r in sess:                                 # qualifying first; race / sprint if it has no laps
+            try:
+                got = measure_lines(r)
+            except OpenF1Locked:
+                print('  OpenF1 locked (live session): sector lines continue next run', file=sys.stderr)
+                return done
+            except Exception as e:
+                print(f'  {r["session"]} failed: {e}', file=sys.stderr)
+                got = None
+            if got:
+                used = r
+                break
+        base = {'year': key[0], 'circuit': key[1], 'display': used.get('display') or key[1],
+                'track_keywords': used.get('track_keywords') or '', 'session_key': used['session_key'],
+                'session': used['session'], 'utc_start': used['utc_start']}
+        if got:
+            kept[key] = dict(base, **got); done += 1
+            print(f'    {used["session"]}: S1 {got["s1"]:.4f}  S2 {got["s2"]:.4f}  ({got["laps"]} laps, spread {got["spread"]:.4f})', file=sys.stderr)
+        else:
+            kept[key] = base                           # no data (yet): retried while recent, then left empty
+    out = sorted(kept.values(), key=lambda r: (int(r['year']), str(r['utc_start'])))
+    write_csv(path, LINE_COLUMNS, out)
     return done
 
 
@@ -970,6 +1100,11 @@ def main():
         for x in segs:
             w.writerow({k: ('' if x.get(k) is None else x.get(k)) for k in SEG_COLUMNS})
     os.replace(seg_out + '.tmp', seg_out)
+    # real F1 sector line positions (True Timer), in their own file
+    try:
+        counts['sector_lines'] = update_lines(os.path.join(os.path.dirname(out), 'f1_sector_lines.csv'), rows, now)
+    except Exception as e:
+        print(f'sector lines failed: {e}', file=sys.stderr)
     print(f'wrote {len(rows)} sessions to {out}, {len(segs)} qualifying segments and {len(fp_rows)} practice '
           f'lines ({counts})', file=sys.stderr)
 
