@@ -73,11 +73,13 @@ CIRCUITS = {
 # only know data/f1_weather_db.csv keep working unchanged.
 SEG_COLUMNS = ['session_key', 'segment', 'label', 'local_start', 'utc_start', 'utc_end', 'stamp_ts',
                'air_c', 'track_c', 'humidity_pct', 'wind_kmh', 'wind_dir_deg', 'rain', 'rain_frac',
-               'track_state', 'pure_weather', 'best_lap', 'best_lap_s', 'best_driver', 'source']
+               'track_state', 'pure_weather', 'best_lap', 'best_lap_s', 'best_driver', 'source',
+               'best_s1', 'best_s2', 'best_s3', 'best_team', 'best_team_colour', 'sector_src', 'best_driver_name']
 QUALI = ('Qualifying', 'Sprint Qualifying', 'Sprint Shootout')
 # typical segment start offsets (minutes after session start) used for forecasts
 SEG_OFFSETS = {'Qualifying': (15, 40, 59), 'Sprint Qualifying': (10, 27, 42), 'Sprint Shootout': (10, 27, 42)}
 # ^ forecast snapshot time = usual end of each segment minus ~3 min (final flying laps)
+SECTOR_SECONDS = 900                       # time budget per run for adding sector times to stored best laps
 SEG_RAIN_HEAVY = 0.7                       # share of samples with rain: heavier rain preset
 SNAP_MINUTES = 5                           # segment snapshot = last 5 minutes before the chequered flag
 SNAP_RAIN = 0.3                            # raining in >= 30 % of those samples -> 'rain'
@@ -97,7 +99,8 @@ FP_BACKFILL_SECONDS = 1200                 # time budget per run for practice se
 FP_COLUMNS = ['year', 'round', 'meeting', 'circuit', 'country', 'session', 'session_key', 'gmt_offset', 'display',
               'track_keywords', 'part', 'step', 'local_start', 'utc_start', 'stamp_ts', 'air_c', 'track_c',
               'humidity_pct', 'pressure_hpa', 'wind_kmh', 'wind_dir_deg', 'rain', 'rain_frac', 'cloud_pct',
-              'precip_mm', 'track_state', 'pure_weather', 'best_lap', 'best_lap_s', 'best_driver', 'source']
+              'precip_mm', 'track_state', 'pure_weather', 'best_lap', 'best_lap_s', 'best_driver', 'source',
+              'best_s1', 'best_s2', 'best_s3', 'best_team', 'best_team_colour', 'sector_src', 'best_driver_name']
 
 COLUMNS = ['year', 'round', 'meeting', 'circuit', 'country', 'session', 'local_start', 'utc_start',
            'gmt_offset', 'stamp_ts', 'air_c', 'track_c', 'humidity_pct', 'pressure_hpa', 'wind_kmh',
@@ -367,6 +370,27 @@ def fmt_lap(sec):
     return f'{m}:{sec - 60 * m:06.3f}'
 
 
+def driver_table(session_key):
+    """driver number -> (acronym, team name, team colour hex) for a session."""
+    out = {}
+    for d in openf1('drivers', session_key=session_key):
+        out[d['driver_number']] = (d.get('name_acronym') or str(d['driver_number']), d.get('team_name') or '',
+                                   (d.get('team_colour') or '').upper(), (d.get('last_name') or '').replace(',', ' '))
+    return out
+
+
+def lap_extras(lap, drivers):
+    """Sector times and team of a real best lap (for True Timer). sector_src = timing | none."""
+    if not lap:
+        return {}
+    acr, team, colour, last = drivers.get(lap.get('driver_number')) or ('', '', '', '')
+    secs = [lap.get(f'duration_sector_{i}') for i in (1, 2, 3)]
+    ok = all(isinstance(x, (int, float)) and x > 0 for x in secs)
+    return {'best_s1': round(secs[0], 3) if ok else '', 'best_s2': round(secs[1], 3) if ok else '',
+            'best_s3': round(secs[2], 3) if ok else '', 'best_team': team.replace(',', ' '),
+            'best_team_colour': colour, 'sector_src': 'timing' if ok else 'none', 'best_driver_name': last}
+
+
 def infer_phases(rc):
     """Set m['_phase'] on race-control messages. OpenF1 sometimes leaves qualifying_phase empty for a
     whole segment (e.g. Canada 2026: Q1 and SQ1 have no phase). If at least one segment is tagged,
@@ -423,8 +447,7 @@ def timing_segments(s, parent, weather=None):
     # no try/except: if the lap data can't be downloaded (e.g. OpenF1 locked during a live session) the
     # segments are not stored without their best laps, they're fetched again on the next run
     laps = openf1('laps', session_key=s['session_key'])
-    drivers = {d['driver_number']: d.get('name_acronym') or str(d['driver_number'])
-               for d in openf1('drivers', session_key=s['session_key'])}
+    drivers = driver_table(s['session_key'])
     segs = []
     for p in sorted(greens):
         t0 = greens[p]
@@ -452,12 +475,13 @@ def timing_segments(s, parent, weather=None):
             sky = int(parent['pure_weather']) if str(parent.get('pure_weather') or '').isdigit() else 18
             pw = sky if sky >= 15 else (19 if state != 'dry' else 18)
         # fastest lap that started in this segment
-        best, best_drv = None, ''
+        best, best_drv, best_lap = None, '', None
         for lap in laps:
             d, ls = lap.get('lap_duration'), lap.get('date_start')
             if d and ls and t0 <= parse_time(ls) <= t1:
                 if best is None or d < best:
-                    best, best_drv = d, drivers.get(lap.get('driver_number'), '')
+                    best, best_lap = d, lap
+                    best_drv = drivers.get(lap.get('driver_number'), ('',))[0]
         snap_t = t1 - timedelta(minutes=2)                 # time of day for the final flying laps
         local, stamp = local_from_utc(snap_t, s['gmt_offset'])
         wind_ms = median(f('wind_speed'))
@@ -471,7 +495,7 @@ def timing_segments(s, parent, weather=None):
             'wind_dir_deg': circular_mean(f('wind_direction')) if f('wind_direction') else '',
             'rain': 1 if state == 'rain' else 0, 'rain_frac': round(rain_end, 2), 'track_state': state,
             'pure_weather': pw, 'best_lap': fmt_lap(best), 'best_lap_s': round(best, 3) if best else '',
-            'best_driver': best_drv, 'source': 'timing',
+            'best_driver': best_drv, 'source': 'timing', **lap_extras(best_lap, drivers),
         })
     return segs
 
@@ -615,16 +639,16 @@ def timing_practice(s, meeting, rnd):
     for lap in laps:
         d, ls = lap.get('lap_duration'), lap.get('date_start')
         if d and ls and not lap.get('is_pit_out_lap') and (best is None or d < best[0]):
-            best = (d, parse_time(ls), lap.get('driver_number'))
-    drv = ''
+            best = (d, parse_time(ls), lap.get('driver_number'), lap)
+    drv, drivers = '', {}
     if best:
-        drivers = {x['driver_number']: x.get('name_acronym') or str(x['driver_number'])
-                   for x in openf1('drivers', session_key=s['session_key'])}
-        drv = drivers.get(best[2], '')
+        drivers = driver_table(s['session_key'])
+        drv = drivers.get(best[2], ('',))[0]
     if best:
         t = best[1]
         c = conditions(t - timedelta(minutes=3), t + timedelta(seconds=best[0] + 60), t)
-        lap = {'best_lap': fmt_lap(best[0]), 'best_lap_s': round(best[0], 3), 'best_driver': drv}
+        lap = {'best_lap': fmt_lap(best[0]), 'best_lap_s': round(best[0], 3), 'best_driver': drv,
+               **lap_extras(best[3], drivers)}
     else:
         t = start + timedelta(minutes=FP_FASTEST_FORECAST_MIN)
         c = conditions(t - win, t + win, t)
@@ -685,6 +709,59 @@ def write_csv(path, columns, rows):
         for x in rows:
             w.writerow({k: ('' if x.get(k) is None else x.get(k)) for k in columns})
     os.replace(path + '.tmp', path)
+
+
+def fill_sectors(segs, fp_rows, budget_s=SECTOR_SECONDS):
+    """Add sector times + team to best laps stored before they were collected (newest first, one laps
+    download per session, within a time budget; the rest on later runs)."""
+    todo = {}
+    for x in segs:
+        if x.get('source') == 'timing' and x.get('best_lap') and int(x.get('segment') or 0) >= 1 and \
+                (not x.get('sector_src') or (x.get('sector_src') == 'timing' and not x.get('best_driver_name'))):
+            todo.setdefault(str(x['session_key']), []).append(('seg', x))
+    for x in fp_rows:
+        if x.get('source') == 'timing' and x.get('part') == 'fastest' and x.get('best_lap') and \
+                (not x.get('sector_src') or (x.get('sector_src') == 'timing' and not x.get('best_driver_name'))):
+            todo.setdefault(str(x['session_key']), []).append(('fp', x))
+    begin, done = time.time(), 0
+    for key, items in sorted(todo.items(), key=lambda kv: max(str(x.get('utc_start')) for _, x in kv[1]), reverse=True):
+        if time.time() - begin > budget_s:
+            break
+        try:
+            laps = openf1('laps', session_key=int(key))
+            drivers = driver_table(int(key))
+        except OpenF1Locked:
+            print('  OpenF1 locked (live session): sector times continue next run', file=sys.stderr)
+            break
+        except Exception as e:
+            print(f'  sectors for session {key} failed: {e}', file=sys.stderr)
+            continue
+        for kind, x in items:
+            want = float(x['best_lap_s']) if x.get('best_lap_s') not in (None, '') else None
+            lo = hi = None
+            if kind == 'seg':
+                try:
+                    lo, hi = parse_time(x['utc_start']), parse_time(x['utc_end'])
+                except Exception:
+                    lo = hi = None
+            pick = None
+            for lap in laps:
+                d, ls = lap.get('lap_duration'), lap.get('date_start')
+                if not d or not ls:
+                    continue
+                if lo and hi and not (lo <= parse_time(ls) <= hi):
+                    continue
+                if kind == 'fp' and lap.get('is_pit_out_lap'):
+                    continue
+                if want is not None and abs(d - want) < 0.0015:
+                    pick = lap; break                  # the stored best lap itself
+                if pick is None or d < pick['lap_duration']:
+                    pick = lap
+            if pick is not None and want is not None and abs(pick['lap_duration'] - want) > 0.0015:
+                pick = None                            # not the same lap: don't guess
+            x.update(lap_extras(pick, drivers) if pick else {'sector_src': 'none'})
+            done += 1
+    return done
 
 
 # --------------------------------------------------------------------------------------------- main
@@ -856,6 +933,8 @@ def main():
             new = forecast_practice(s, m, rn)
             if new: counts['practice_forecast'] += 1
         fp_rows += new
+    # sector times + team for best laps stored before v2.4 (for True Timer)
+    counts['sectors'] = fill_sectors(segs, fp_rows)
     write_csv(fp_out, FP_COLUMNS, sorted(fp_rows, key=lambda x: (str(x['utc_start'])[:10], str(x.get('session')),
                                                                  str(x.get('part')) != 'fastest', int(x.get('step') or 0))))
 
