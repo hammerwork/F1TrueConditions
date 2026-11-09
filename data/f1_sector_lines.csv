@@ -1,0 +1,52 @@
+year,circuit,display,track_keywords,s1,s2,laps,spread,length_m,session_key,session,utc_start
+2024,Singapore,Singapore,singapore;marina_bay;marinabay,0.33279,0.69997,5,0.00407,4863,9602,Qualifying,2024-09-21T13:00:00Z
+2024,Austin,Austin (COTA),austin;cota;americas,0.30146,0.71233,5,0.00256,5422,9608,Qualifying,2024-10-19T22:00:00Z
+2024,Mexico City,Mexico City,mexico;hermanos,0.44996,0.79399,5,0.00324,4249,9621,Qualifying,2024-10-26T21:00:00Z
+2024,Interlagos,Interlagos,interlagos;sao_paulo;saopaulo;brazil,0.28958,0.73652,5,0.00183,4230,9627,Qualifying,2024-11-03T10:30:00Z
+2024,Las Vegas,Las Vegas,vegas,0.27119,0.54516,5,0.00256,6153,9640,Qualifying,2024-11-23T06:00:00Z
+2024,Lusail,Lusail,lusail;losail;qatar,0.38693,0.6807,5,0.00234,5388,9646,Qualifying,2024-11-30T18:00:00Z
+2024,Yas Marina Circuit,Abu Dhabi,yas;abu_dhabi;abudhabi,0.22924,0.67476,5,0.00312,5230,9658,Qualifying,2024-12-07T14:00:00Z
+2025,Melbourne,Melbourne,melbourne;albert;albertpark,0.33176,0.6012,5,0.00227,5242,9689,Qualifying,2025-03-15T05:00:00Z
+2025,Shanghai,Shanghai,shanghai;china,0.26059,0.54705,5,0.00267,5374,9994,Qualifying,2025-03-22T07:00:00Z
+2025,Suzuka,Suzuka,suzuka,0.37888,0.81178,5,0.0035,5771,10002,Qualifying,2025-04-05T06:00:00Z
+2025,Sakhir,Bahrain,bahrain;sakhir,0.33091,0.73717,5,0.00173,5340,10010,Qualifying,2025-04-12T16:00:00Z
+2025,Jeddah,Jeddah,jeddah;saudi,0.33849,0.67283,5,0.00247,6110,10018,Qualifying,2025-04-19T17:00:00Z
+2025,Miami,Miami,miami,0.3351,0.68287,5,0.0029,5347,10029,Qualifying,2025-05-03T20:00:00Z
+2025,Imola,Imola,imola,0.36237,0.68864,5,0.00118,4868,9983,Qualifying,2025-05-17T14:00:00Z
+2025,Monte Carlo,Monaco,monaco;monte,0.31657,0.74104,5,0.00311,3271,9975,Qualifying,2025-05-24T14:00:00Z
+2025,Catalunya,Barcelona,barcelona;catalunya;montmelo,0.34701,0.72796,5,0.0036,4612,9967,Qualifying,2025-05-31T14:00:00Z
+2025,Montreal,Montreal,montreal;villeneuve;canada,0.24865,0.57047,5,0.00258,4314,9959,Qualifying,2025-06-14T20:00:00Z
+2025,Spielberg,Red Bull Ring,spielberg;redbull;red_bull;rbr;austria,0.28269,0.67511,5,0.00323,4291,9951,Qualifying,2025-06-28T14:00:00Z
+2025,Silverstone,Silverstone,silverstone,0.31084,0.72769,5,0.0025,5822,9943,Qualifying,2025-07-05T14:00:00Z
+2025,Spa-Francorchamps,Spa,spa;francorchamps,0.32386,0.72464,5,0.00146,6950,9935,Qualifying,2025-07-26T14:00:00Z
+2025,Hungaroring,Hungaroring,hungaroring;hungary,0.39745,0.74983,5,0.00375,4325,9924,Qualifying,2025-08-02T14:00:00Z
+2025,Zandvoort,Zandvoort,zandvoort,0.34863,0.69127,5,0.00361,4215,9916,Qualifying,2025-08-30T13:00:00Z
+2025,Monza,Monza,monza,0.32857,0.64333,5,0.0014,5761,9908,Qualifying,2025-09-06T14:00:00Z
+2025,Baku,Baku,baku;azerbaijan,0.33481,0.67253,5,0.00214,5958,9904,Race,2025-09-21T11:00:00Z
+2025,Singapore,Singapore,singapore;marina_bay;marinabay,0.33245,0.69901,5,0.00302,4857,9892,Qualifying,2025-10-04T13:00:00Z
+2025,Austin,Austin (COTA),austin;cota;americas,0.3005,0.71127,5,0.00283,5422,9884,Qualifying,2025-10-18T21:00:00Z
+2025,Mexico City,Mexico City,mexico;hermanos,0.44927,0.79413,5,0.00218,4244,9873,Qualifying,2025-10-25T21:00:00Z
+2025,Interlagos,Interlagos,interlagos;sao_paulo;saopaulo;brazil,0.28858,0.73623,5,0.00215,4235,9865,Qualifying,2025-11-08T18:00:00Z
+2025,Las Vegas,Las Vegas,vegas,0.27083,0.54479,5,0.00213,6152,9854,Qualifying,2025-11-22T04:00:00Z
+2025,Lusail,Lusail,lusail;losail;qatar,0.38749,0.6809,5,0.00145,5389,9846,Qualifying,2025-11-29T18:00:00Z
+2025,Yas Marina Circuit,Abu Dhabi,yas;abu_dhabi;abudhabi,0.22947,0.67396,5,0.00235,5233,9835,Qualifying,2025-12-06T14:00:00Z
+2026,Melbourne,Melbourne,melbourne;albert;albertpark,0.33092,0.60003,5,0.00317,5246,11230,Qualifying,2026-03-07T05:00:00Z
+2026,Shanghai,Shanghai,shanghai;china,0.26198,0.54861,5,0.00205,5444,11241,Qualifying,2026-03-14T07:00:00Z
+2026,Suzuka,Suzuka,suzuka,0.37757,0.81233,5,0.00192,5774,11249,Qualifying,2026-03-28T06:00:00Z
+2026,Miami,Miami,miami,0.33502,0.68356,5,0.00189,5346,11276,Qualifying,2026-05-02T20:00:00Z
+2026,Montreal,Montreal,montreal;villeneuve;canada,0.25476,0.57049,5,0.00816,4343,11287,Qualifying,2026-05-23T20:00:00Z
+2026,Monte Carlo,Monaco,monaco;monte,0.3163,0.74056,5,0.00353,3269,11295,Qualifying,2026-06-06T14:00:00Z
+2026,Catalunya,Barcelona,barcelona;catalunya;montmelo,0.34744,0.7276,5,0.00346,4612,11303,Qualifying,2026-06-13T14:00:00Z
+2026,Spielberg,Red Bull Ring,spielberg;redbull;red_bull;rbr;austria,0.28241,0.67529,5,0.00111,4291,11311,Qualifying,2026-06-27T14:00:00Z
+2026,Silverstone,Silverstone,silverstone,0.31074,0.72853,5,0.00235,5826,11322,Qualifying,2026-07-04T15:00:00Z
+2026,Spa-Francorchamps,Spa,spa;francorchamps,0.3229,0.72532,5,0.0015,6948,11330,Qualifying,2026-07-18T14:00:00Z
+2026,Hungaroring,Hungaroring,hungaroring;hungary,0.39784,0.74847,5,0.00334,4325,11338,Qualifying,2026-07-25T14:00:00Z
+2026,Zandvoort,Zandvoort,zandvoort,0.3491,0.69062,5,0.00391,4211,11349,Qualifying,2026-08-22T14:00:00Z
+2026,Monza,Monza,monza,0.3287,0.64361,5,0.00163,5759,11357,Qualifying,2026-09-05T14:00:00Z
+2026,Madring,Madrid,madring;madrid,0.3385,0.71804,5,0.00098,5337,11365,Qualifying,2026-09-12T14:00:00Z
+2026,Baku,Baku,baku;azerbaijan,0.33531,0.6729,5,0.00212,5959,11373,Qualifying,2026-09-25T12:00:00Z
+2026,Kuala Lumpur,Sepang,sepang;malaysia;kuala,0.25954,0.58889,5,0.00221,5496,11730,Qualifying,2026-10-03T08:00:00Z
+2026,Singapore,Singapore,singapore;marina_bay;marinabay,0.33448,0.70032,5,0.00327,4861,11384,Qualifying,2026-10-10T13:30:00Z
+2026,Austin,Austin (COTA),austin;cota;americas,0.3013,0.71295,5,0.00217,5424,11392,Qualifying,2026-10-24T21:00:00Z
+2026,Mexico City,Mexico City,mexico;hermanos,0.44874,0.79407,5,0.0041,4247,11400,Qualifying,2026-10-31T21:00:00Z
+2026,Interlagos,Interlagos,interlagos;sao_paulo;saopaulo;brazil,0.28808,0.73536,5,0.00226,4227,11408,Qualifying,2026-11-07T18:00:00Z
