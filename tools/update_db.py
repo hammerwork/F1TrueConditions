@@ -129,6 +129,9 @@ def get_json(url, params=None, tries=6):
             raise
 
 
+NOW = datetime.now(timezone.utc)   # set by main() (--now for tests)
+
+
 class OpenF1Locked(Exception):
     """OpenF1 refuses all requests without an API key while an F1 session is live (HTTP 401)."""
 
@@ -139,6 +142,10 @@ def openf1(path, **params):
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
             raise OpenF1Locked(f'{path}: HTTP {e.code}') from e
+        if e.code == 404:
+            # OpenF1 answers 404 "No results found" when there is no data (yet): an empty list
+            time.sleep(0.6)
+            return []
         raise
     time.sleep(0.6)               # stay well under OpenF1's free rate limit
     return data
@@ -655,7 +662,10 @@ def timing_practice(s, meeting, rnd):
         lap = {}
     if c:
         out.insert(0, fp_part(meta, s['gmt_offset'], t, 'fastest', 0, **c, **lap))
-    if not best:      # the feed really has no laps: marker, so the session isn't fetched again every run
+    if not best:
+        if end > NOW - timedelta(days=2):
+            return []         # laps not in the feed yet: don't store it without them, try again next run
+        # the feed really has no laps: marker, so the session isn't fetched again every run
         out.append(dict(meta, part='nolap', step=0, utc_start=start.strftime('%Y-%m-%dT%H:%M:%SZ'), source='timing'))
     return out
 
@@ -796,7 +806,9 @@ def main():
                 if r.get('source') == 'timing' and r.get('session_key'):
                     kept_fp.setdefault(int(r['session_key']), []).append(r)
 
+    global NOW
     now = parse_time(args.now) if args.now else datetime.now(timezone.utc)
+    NOW = now
     t_begin = time.time()
     rows, segs, backfill = [], [], []
     fp_rows, fp_todo, fp_old = [], [], {}
@@ -891,6 +903,9 @@ def main():
             new = timing_segments(s, r)
         except Exception as e:
             print(f'  failed: {e}', file=sys.stderr); segs += old; continue      # retried next run
+        recent = parse_time(s['date_start']) > now - timedelta(days=2)
+        if recent and (not new or not any(x.get('best_lap') for x in new)):
+            segs += old; continue      # data may still be arriving: keep what is stored, look again next run
         if not new:   # no Q1/Q2/Q3 in race control: remember that, so it isn't fetched again every run
             new = [{'session_key': s['session_key'], 'segment': 0, 'utc_start': s['date_start'], 'source': 'timing'}]
         elif {x['segment'] for x in new} != {1, 2, 3} or not any(x.get('best_lap') for x in new):
