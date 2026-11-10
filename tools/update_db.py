@@ -786,14 +786,20 @@ def fill_sectors(segs, fp_rows, budget_s=SECTOR_SECONDS):
 # at the moment its official S1 and S2 times ended, on the fastest laps of the weekend (median).
 # Used by True Timer (standalone, or with True Conditions); the weather files are not touched.
 LINE_COLUMNS = ['year', 'circuit', 'display', 'track_keywords', 's1', 's2', 'laps', 'spread', 'length_m',
-                'session_key', 'session', 'utc_start']
+                'session_key', 'session', 'utc_start', 'p0', 'p1', 'p2', 'outline']
+# p0 / p1 / p2: where the finish line, S1 and S2 lines are on the OpenF1 map (x:y, decimetres, median of
+# the laps). outline: the fastest lap's path, LINE_OUTLINE points evenly spaced from the line (x:y|x:y…).
+# True Timer fits the outline onto the AC track's AI line and puts the lines there, so it works even when
+# the track mod's start/finish line is somewhere else than F1's timing line.
+LINE_OUTLINE = 160
 LINE_SESSIONS = ['Qualifying', 'Sprint Qualifying', 'Sprint Shootout', 'Race', 'Sprint']
 LINE_LAPS = 5                    # fastest laps measured per event
 LINE_SECONDS = 600               # time budget per run (first runs fill in 2023-2026)
 
 
 def lap_line_fractions(session_key, lap):
-    """(s1, s2, length) for one lap: share of the lap distance where sector 1 and 2 ended."""
+    """(s1, s2, length, points, outline) for one lap: share of the lap distance where sector 1 and 2
+    ended, the map positions of the line / S1 / S2, and the lap's path evenly resampled."""
     t0 = parse_time(lap['date_start'])
     dur, s1, s2 = lap['lap_duration'], lap['duration_sector_1'], lap['duration_sector_2']
     t1 = t0 + timedelta(seconds=dur)
@@ -823,7 +829,16 @@ def lap_line_fractions(session_key, lap):
     f1, f2 = (b - a) / (e - a), (c - a) / (e - a)
     if not (0.05 < f1 < f2 < 0.95):
         return None
-    return f1, f2, (e - a) / 10          # OpenF1 x/y are in decimetres
+
+    def xy_at_dist(dd):
+        for i in range(1, len(pts)):
+            if dist[i] >= dd:
+                f = (dd - dist[i - 1]) / max(1e-6, dist[i] - dist[i - 1])
+                return (pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * f, pts[i - 1][2] + (pts[i][2] - pts[i - 1][2]) * f)
+        return (pts[-1][1], pts[-1][2])
+    points = [xy_at_dist(a), xy_at_dist(b), xy_at_dist(c)]
+    outline = [xy_at_dist(a + (e - a) * k / LINE_OUTLINE) for k in range(LINE_OUTLINE)]
+    return f1, f2, (e - a) / 10, points, outline          # OpenF1 x/y are in decimetres
 
 
 def measure_lines(s):
@@ -845,9 +860,12 @@ def measure_lines(s):
     if len(res) < 2:
         return None
     f1s, f2s = [r[0] for r in res], [r[1] for r in res]
+    pt = lambda k: '%d:%d' % (round(median([r[3][k][0] for r in res])), round(median([r[3][k][1] for r in res])))
     return {'s1': round(median(f1s), 5), 's2': round(median(f2s), 5), 'laps': len(res),
             'spread': round(max(max(f1s) - min(f1s), max(f2s) - min(f2s)), 5),
-            'length_m': round(median([r[2] for r in res]))}
+            'length_m': round(median([r[2] for r in res])),
+            'p0': pt(0), 'p1': pt(1), 'p2': pt(2),
+            'outline': '|'.join('%d:%d' % (round(x), round(y)) for x, y in res[0][4])}   # the fastest lap
 
 
 def update_lines(path, rows, now, budget_s=LINE_SECONDS):
@@ -865,8 +883,8 @@ def update_lines(path, rows, now, budget_s=LINE_SECONDS):
     todo = []
     for key, sess in events.items():
         old = kept.get(key)
-        if old and (old.get('s1') or parse_time(old['utc_start']) < now - timedelta(days=2)):
-            continue                                   # measured, or nothing usable long ago: done
+        if old and (old.get('outline') or (not old.get('s1') and parse_time(old['utc_start']) < now - timedelta(days=2))):
+            continue                                   # measured (with map data), or nothing usable long ago: done
         sess.sort(key=lambda r: LINE_SESSIONS.index(r['session']))
         todo.append((key, sess))
     todo.sort(key=lambda kv: max(str(r['utc_start']) for r in kv[1]), reverse=True)
