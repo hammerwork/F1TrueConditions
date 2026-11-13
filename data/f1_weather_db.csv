@@ -227,5 +227,6 @@ year,round,meeting,circuit,country,session,local_start,utc_start,gmt_offset,stam
 2026,19,Mexico City Grand Prix,Mexico City,Mexico,Race,2026-11-01 14:00,2026-11-01T20:00:00Z,-06:00,1793541600,23.5,47.5,40.9,784.2,7.7,217,0,0.0,60,0.0,18,22.1,25.2,,51.0,11404,timing,Mexico City,mexico;hermanos
 2026,20,São Paulo Grand Prix,Interlagos,Brazil,Qualifying,2026-11-07 15:00,2026-11-07T18:00:00Z,-03:00,1794063600,20.0,29.1,93.5,923.3,2.9,293,1,0.7,100,0.7,7,20.0,21.0,,41.6,11408,timing,Interlagos,interlagos;sao_paulo;saopaulo;brazil
 2026,20,São Paulo Grand Prix,Interlagos,Brazil,Race,2026-11-08 14:00,2026-11-08T17:00:00Z,-03:00,1794146400,15.9,26.0,86.8,930.1,10.1,172,0,0.0,100,0.5,19,15.6,16.7,,43.6,11412,timing,Interlagos,interlagos;sao_paulo;saopaulo;brazil
-2026,21,Las Vegas Grand Prix,Las Vegas,United States,Qualifying,2026-11-20 20:00,2026-11-21T04:00:00Z,-08:00,1795204800,7.5,11.8,53,937.3,8.0,5,0,,100,0,19,,,,,11416,forecast,Las Vegas,vegas
-2026,21,Las Vegas Grand Prix,Las Vegas,United States,Race,2026-11-21 20:00,2026-11-22T04:00:00Z,-08:00,1795291200,9.0,13.3,41,939.8,13.9,21,0,,100,0,19,,,,,11420,forecast,Las Vegas,vegas
+2026,21,Las Vegas Grand Prix,Las Vegas,United States,Qualifying,2026-11-20 20:00,2026-11-21T04:00:00Z,-08:00,1795204800,12.9,17.2,27,935.2,5.4,356,0,,29,0,16,,,,,11416,forecast,Las Vegas,vegas
+2026,21,Las Vegas Grand Prix,Las Vegas,United States,Race,2026-11-21 20:00,2026-11-22T04:00:00Z,-08:00,1795291200,7.9,12.2,68,938.9,14.6,57,0,,100,0,19,,,,,11420,forecast,Las Vegas,vegas
+2026,22,Qatar Grand Prix,Lusail,Qatar,Qualifying,2026-11-28 21:00,2026-11-28T18:00:00Z,+03:00,1795899600,22.2,26.5,61,1012.7,4.5,166,0,,0,0,15,,,,,11424,forecast,Lusail,lusail;losail;qatar
