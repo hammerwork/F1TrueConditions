@@ -227,7 +227,7 @@ year,round,meeting,circuit,country,session,local_start,utc_start,gmt_offset,stam
 2026,19,Mexico City Grand Prix,Mexico City,Mexico,Race,2026-11-01 14:00,2026-11-01T20:00:00Z,-06:00,1793541600,23.5,47.5,40.9,784.2,7.7,217,0,0.0,60,0.0,18,22.1,25.2,,51.0,11404,timing,Mexico City,mexico;hermanos
 2026,20,São Paulo Grand Prix,Interlagos,Brazil,Qualifying,2026-11-07 15:00,2026-11-07T18:00:00Z,-03:00,1794063600,20.0,29.1,93.5,923.3,2.9,293,1,0.7,100,0.7,7,20.0,21.0,,41.6,11408,timing,Interlagos,interlagos;sao_paulo;saopaulo;brazil
 2026,20,São Paulo Grand Prix,Interlagos,Brazil,Race,2026-11-08 14:00,2026-11-08T17:00:00Z,-03:00,1794146400,15.9,26.0,86.8,930.1,10.1,172,0,0.0,100,0.5,19,15.6,16.7,,43.6,11412,timing,Interlagos,interlagos;sao_paulo;saopaulo;brazil
-2026,21,Las Vegas Grand Prix,Las Vegas,United States,Qualifying,2026-11-20 20:00,2026-11-21T04:00:00Z,-08:00,1795204800,13.4,17.7,39,942.0,8.8,19,0,,3,0,15,,,,,11416,forecast,Las Vegas,vegas
-2026,21,Las Vegas Grand Prix,Las Vegas,United States,Race,2026-11-21 20:00,2026-11-22T04:00:00Z,-08:00,1795291200,14.0,18.3,34,938.9,8.9,130,0,,100,0,19,,,,,11420,forecast,Las Vegas,vegas
-2026,22,Qatar Grand Prix,Lusail,Qatar,Qualifying,2026-11-28 21:00,2026-11-28T18:00:00Z,+03:00,1795899600,22.4,26.7,71,1017.6,7.6,304,0,,33,0,17,,,,,11424,forecast,Lusail,lusail;losail;qatar
-2026,22,Qatar Grand Prix,Lusail,Qatar,Race,2026-11-29 19:00,2026-11-29T16:00:00Z,+03:00,1795978800,24.9,29.2,62,1014.5,11.4,337,0,,77,0,18,,,,,11428,forecast,Lusail,lusail;losail;qatar
+2026,21,Las Vegas Grand Prix,Las Vegas,United States,Qualifying,2026-11-20 20:00,2026-11-21T04:00:00Z,-08:00,1795204800,13.4,17.7,35,943.0,0.0,270,0,,6,0,15,,,,,11416,forecast,Las Vegas,vegas
+2026,21,Las Vegas Grand Prix,Las Vegas,United States,Race,2026-11-21 20:00,2026-11-22T04:00:00Z,-08:00,1795291200,13.2,17.5,34,938.7,8.0,54,0,,33,0,17,,,,,11420,forecast,Las Vegas,vegas
+2026,22,Qatar Grand Prix,Lusail,Qatar,Qualifying,2026-11-28 21:00,2026-11-28T18:00:00Z,+03:00,1795899600,18.8,23.1,64,1018.4,6.5,316,0,,0,0,15,,,,,11424,forecast,Lusail,lusail;losail;qatar
+2026,22,Qatar Grand Prix,Lusail,Qatar,Race,2026-11-29 19:00,2026-11-29T16:00:00Z,+03:00,1795978800,22.2,26.5,47,1016.7,9.3,319,0,,96,0,19,,,,,11428,forecast,Lusail,lusail;losail;qatar
