@@ -959,7 +959,7 @@ def dry_reference_lap(year, circuit, rows, segs, fp_rows):
     def consider(x, label):
         nonlocal best
         t = float(x['best_lap_s']) if x.get('best_lap_s') not in (None, '') else None
-        if t and t > 0 and x.get('source') == 'timing' and dry(x) and (not best or t < best[1]):
+        if t and 0 < t < LAP_CAP and x.get('source') == 'timing' and dry(x) and (not best or t < best[1]):
             best = (str(x['session_key']), t, x.get('best_driver') or '', label)
     for x in fp_rows:
         if str(x.get('year')) == year and x.get('circuit') == circuit and x.get('part') == 'fastest':
@@ -1017,6 +1017,157 @@ def measure_grip(session_key, lap_s, acronym):
         print(f'    car data of {name or lap["driver_number"]} {fmt_lap(lap["lap_duration"])} covers only '
               f'{cover * 100:.0f} % of a sector, trying the next lap', file=sys.stderr)
     return None
+
+
+# --------------------------------------------------------------------------------------------- corner wetness
+# data/f1_corner_wet.csv: for every wet / damp / drying session with a real best lap, the slowest speed in
+# each corner on that lap and on the weekend's fastest dry lap (or last year's, when this weekend has none
+# yet). The grip a corner allows goes with speed squared, so (wet / dry)^2 is the grip that was left there:
+# True Conditions turns that into wetness corner by corner. Own file: older app versions never see it.
+#   corners = 'f:dry:wet|…'  f = where on the lap (share of the distance from the finish line), dry / wet = the
+#   slowest speed in km/h (parabola through the slowest three samples); wet empty = no matching corner.
+CORNER_COLUMNS = ['year', 'circuit', 'session_key', 'segment', 'label', 'wet_lap_s', 'wet_driver',
+                  'dry_session_key', 'dry_lap_s', 'dry_driver', 'dry_src', 'corners', 'dry_speeds']
+# dry_speeds: the dry lap's speed (km/h) at 120 evenly spaced points of the lap distance (for the spray model:
+# water stays where the cars are slow)
+SPEED_POINTS = 120
+CORNER_SECONDS = 240
+
+
+def speed_trace(session_key, lap):
+    """[(time s, speed km/h, share of the lap distance)] of one lap from the car data, or None when the data
+    has gaps (OpenF1 writes 104 for no data) over more than 15 % of the lap."""
+    t0 = parse_time(lap['date_start'])
+    t1 = t0 + timedelta(seconds=lap['lap_duration'])
+    iso = lambda t: t.strftime('%Y-%m-%dT%H:%M:%S.%f')
+    cd = openf1('car_data', session_key=int(session_key), driver_number=lap['driver_number'],
+                **{'date>': iso(t0), 'date<': iso(t1)})
+    pts = sorted(((parse_time(p['date']) - t0).total_seconds(), p.get('speed')) for p in cd
+                 if p.get('speed') is not None and 0 <= (p.get('throttle') or 0) <= 100 and 0 <= (p.get('brake') or 0) <= 100)
+    if len(pts) < 20:
+        return None
+    covered = sum(b[0] - a[0] for a, b in zip(pts, pts[1:]) if b[0] - a[0] <= 1.0)
+    if covered < 0.85 * lap['lap_duration']:
+        return None
+    d, out = 0.0, [(pts[0][0], pts[0][1], 0.0)]
+    for a, b in zip(pts, pts[1:]):
+        d += (a[1] + b[1]) / 2 / 3.6 * (b[0] - a[0])
+        out.append((b[0], b[1], d))
+    return [(t, v, x / d) for t, v, x in out] if d > 0 else None
+
+
+def corner_minima(tr, drop=25.0, reach=0.06):
+    """[(f, v)] slowest points of the corners: a local minimum with the speed at least `drop` km/h higher within
+    `reach` of the lap on both sides; the minimum is refined with a parabola through the three samples."""
+    out = []
+    for i in range(1, len(tr) - 1):
+        f, v = tr[i][2], tr[i][1]
+        if not (v <= tr[i - 1][1] and v < tr[i + 1][1]):
+            continue
+        before = max(x[1] for x in tr[:i + 1] if f - x[2] < reach)
+        after = max(x[1] for x in tr[i:] if x[2] - f < reach)
+        if before - v < drop or after - v < drop:
+            continue
+        (fa, va), (fc, vc) = (tr[i - 1][2], tr[i - 1][1]), (tr[i + 1][2], tr[i + 1][1])
+        den = va - 2 * v + vc
+        if den > 0:                                       # vertex of the parabola through the three samples
+            k = 0.5 * (va - vc) / den
+            if -1 < k < 1:
+                v = v - 0.25 * (va - vc) * k
+                f = f + k * ((fc - fa) / 2)
+        out.append((round(f, 4), round(v, 1)))
+    return out
+
+
+def speed_profile(tr, n=SPEED_POINTS):
+    out, i = [], 1
+    for k in range(n):
+        x = (k + 0.5) / n
+        while i < len(tr) - 1 and tr[i][2] < x:
+            i += 1
+        a, b = tr[i - 1], tr[i]
+        f = max(0.0, min(1.0, (x - a[2]) / max(1e-9, b[2] - a[2])))
+        out.append(str(round(a[1] + (b[1] - a[1]) * f)))
+    return ' '.join(out)
+
+
+def find_lap(session_key, lap_s, acronym):
+    laps = [l for l in openf1('laps', session_key=int(session_key))
+            if valid_lap(l) and abs(l['lap_duration'] - lap_s) < 0.0015]
+    if len(laps) > 1 and acronym:
+        drv = driver_table(int(session_key))
+        laps = [l for l in laps if (drv.get(l['driver_number']) or ('',))[0] == acronym] or laps
+    return laps[0] if laps else None
+
+
+def update_corners(path, rows, segs, fp_rows, now, budget_s=CORNER_SECONDS):
+    """Corner speeds of the wet / damp / drying sessions not measured yet (newest first, within a time budget)."""
+    kept = {}
+    if os.path.exists(path):
+        with open(path, newline='', encoding='utf-8') as f:
+            for r in csv.DictReader(f):
+                kept[(r['session_key'], r['segment'])] = r
+    circ_of = {str(r.get('session_key')): (str(r.get('year')), r.get('circuit')) for r in rows}
+    wet = []
+    for x in segs:
+        if x.get('source') == 'timing' and x.get('best_lap_s') and int(x.get('segment') or 0) >= 1 \
+                and (x.get('track_state') or 'dry') != 'dry':
+            y, c = circ_of.get(str(x['session_key']), (None, None))
+            if y:
+                wet.append((y, c, str(x['session_key']), str(x['segment']), x.get('label') or '', x))
+    for x in fp_rows:
+        if x.get('source') == 'timing' and x.get('part') == 'fastest' and x.get('best_lap_s') \
+                and (x.get('track_state') or 'dry') != 'dry':
+            wet.append((str(x['year']), x['circuit'], str(x['session_key']), '0', str(x.get('session') or ''), x))
+    todo = [w for w in wet if (w[2], w[3]) not in kept]
+    todo.sort(key=lambda w: str(w[5].get('utc_start')), reverse=True)
+    begin, done = time.time(), 0
+    if todo:
+        print(f'corner speeds: {len(todo)} wet sessions to measure', file=sys.stderr)
+    dry_cache = {}
+    for y, c, sk, seg, label, x in todo:
+        if time.time() - begin > budget_s:
+            print('corner speeds: time budget used, the rest on the next runs', file=sys.stderr)
+            break
+        try:
+            if (y, c) not in dry_cache:
+                ref, src = None, ''
+                for yy in range(int(y), int(y) - 4, -1):          # this weekend's dry lap, else an earlier year's
+                    ref = dry_reference_lap(str(yy), c, rows, segs, fp_rows)
+                    if ref:
+                        src = f'{yy} {ref[3]}'
+                        break
+                trd = None
+                if ref:
+                    lap = find_lap(ref[0], ref[1], ref[2])
+                    trd = speed_trace(ref[0], lap) if lap else None
+                dry_cache[(y, c)] = (ref, src, trd)
+            ref, src, trd = dry_cache[(y, c)]
+            if not trd:
+                continue
+            wl = find_lap(sk, float(x['best_lap_s']), x.get('best_driver'))
+            trw = speed_trace(sk, wl) if wl else None
+            if not trw:
+                continue
+        except OpenF1Locked:
+            print('  OpenF1 locked (live session): corner speeds continue next run', file=sys.stderr)
+            break
+        except Exception as e:
+            print(f'  corner speeds {y} {c} {label} failed: {e}', file=sys.stderr)
+            continue
+        cd, cw = corner_minima(trd), corner_minima(trw)
+        parts = []
+        for f, v in cd:
+            m = min(cw, key=lambda q: abs(q[0] - f)) if cw else None
+            parts.append(f'{f:.4f}:{v:.1f}:' + (f'{m[1]:.1f}' if m and abs(m[0] - f) < 0.02 else ''))
+        kept[(sk, seg)] = {'year': y, 'circuit': c, 'session_key': sk, 'segment': seg, 'label': label,
+                           'wet_lap_s': x['best_lap_s'], 'wet_driver': x.get('best_driver') or '',
+                           'dry_session_key': ref[0], 'dry_lap_s': ref[1], 'dry_driver': ref[2], 'dry_src': src,
+                           'corners': '|'.join(parts), 'dry_speeds': speed_profile(trd)}
+        done += 1
+        print(f'  corner speeds {y} {c} {label}: {len(parts)} corners against {src}', file=sys.stderr)
+    write_csv(path, CORNER_COLUMNS, sorted(kept.values(), key=lambda r: (int(r['year']), r['circuit'], r['session_key'], r['segment'])))
+    return done
 
 
 def update_lines(path, rows, now, budget_s=LINE_SECONDS, segs=(), fp_rows=()):
@@ -1311,6 +1462,11 @@ def main():
                                               segs=segs, fp_rows=fp_rows)
     except Exception as e:
         print(f'sector lines failed: {e}', file=sys.stderr)
+    # corner speeds of wet sessions (True Conditions' corner-by-corner wetness), in their own file
+    try:
+        counts['corner_wet'] = update_corners(os.path.join(os.path.dirname(out), 'f1_corner_wet.csv'), rows, segs, fp_rows, now)
+    except Exception as e:
+        print(f'corner speeds failed: {e}', file=sys.stderr)
     print(f'wrote {len(rows)} sessions to {out}, {len(segs)} qualifying segments and {len(fp_rows)} practice '
           f'lines ({counts})', file=sys.stderr)
 
