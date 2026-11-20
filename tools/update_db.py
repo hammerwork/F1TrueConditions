@@ -74,7 +74,8 @@ CIRCUITS = {
 SEG_COLUMNS = ['session_key', 'segment', 'label', 'local_start', 'utc_start', 'utc_end', 'stamp_ts',
                'air_c', 'track_c', 'humidity_pct', 'wind_kmh', 'wind_dir_deg', 'rain', 'rain_frac',
                'track_state', 'pure_weather', 'best_lap', 'best_lap_s', 'best_driver', 'source',
-               'best_s1', 'best_s2', 'best_s3', 'best_team', 'best_team_colour', 'sector_src', 'best_driver_name']
+               'best_s1', 'best_s2', 'best_s3', 'best_team', 'best_team_colour', 'sector_src', 'best_driver_name',
+               'track_src', 'best_tyre']
 QUALI = ('Qualifying', 'Sprint Qualifying', 'Sprint Shootout')
 # typical segment start offsets (minutes after session start) used for forecasts
 SEG_OFFSETS = {'Qualifying': (15, 40, 59), 'Sprint Qualifying': (10, 27, 42), 'Sprint Shootout': (10, 27, 42)}
@@ -100,7 +101,11 @@ FP_COLUMNS = ['year', 'round', 'meeting', 'circuit', 'country', 'session', 'sess
               'track_keywords', 'part', 'step', 'local_start', 'utc_start', 'stamp_ts', 'air_c', 'track_c',
               'humidity_pct', 'pressure_hpa', 'wind_kmh', 'wind_dir_deg', 'rain', 'rain_frac', 'cloud_pct',
               'precip_mm', 'track_state', 'pure_weather', 'best_lap', 'best_lap_s', 'best_driver', 'source',
-              'best_s1', 'best_s2', 'best_s3', 'best_team', 'best_team_colour', 'sector_src', 'best_driver_name']
+              'best_s1', 'best_s2', 'best_s3', 'best_team', 'best_team_colour', 'sector_src', 'best_driver_name',
+              'track_src', 'best_tyre']
+# track_src: why the track is wet / damp when the weather station saw no rain: 'tyres' (the best lap was on
+# intermediates / wets) or 'race control' (WET TRACK declared). best_tyre: compound of the best lap.
+# Step rows (every 10 min) carry the best lap of that window too, so a drying session can be followed.
 
 COLUMNS = ['year', 'round', 'meeting', 'circuit', 'country', 'session', 'local_start', 'utc_start',
            'gmt_offset', 'stamp_ts', 'air_c', 'track_c', 'humidity_pct', 'pressure_hpa', 'wind_kmh',
@@ -377,6 +382,46 @@ def fmt_lap(sec):
     return f'{m}:{sec - 60 * m:06.3f}'
 
 
+LAP_CAP = 200.0                  # seconds: longer "laps" are red-flag / garage time, never a timed lap
+
+
+def valid_lap(lap):
+    d = lap.get('lap_duration')
+    return bool(d and lap.get('date_start') and not lap.get('is_pit_out_lap') and d < LAP_CAP)
+
+
+def wet_tools(session_key, start):
+    """(tyre_of(lap) -> compound, wet_declared) for a session: the stints (tyre per lap) and whether race
+    control declared a WET TRACK (from 20 min before the start)."""
+    stints = openf1('stints', session_key=session_key)
+    rc = openf1('race_control', session_key=session_key)
+    declared = any('WET TRACK' in (m.get('message') or '').upper() and m.get('date')
+                   and parse_time(m['date']) >= start - timedelta(minutes=20) for m in rc)
+
+    def tyre_of(lap):
+        n, num = lap.get('driver_number'), lap.get('lap_number')
+        for st in stints:
+            if st.get('driver_number') == n and num is not None and (st.get('lap_start') or 0) <= num <= (st.get('lap_end') or 999):
+                return (st.get('compound') or '').upper()
+        return ''
+    return tyre_of, declared
+
+
+def wet_from_tyres(state, tyre, declared):
+    """Track state, raised when the weather station saw no rain but the cars ran rain tyres / it was declared wet."""
+    order = ['dry', 'drying', 'damp', 'wet', 'rain']
+    want, src = 'dry', ''
+    if tyre == 'WET':
+        want, src = 'wet', 'tyres'
+    elif tyre == 'INTERMEDIATE':
+        want, src = 'damp', 'tyres'
+    elif declared:
+        want, src = 'drying', 'race control'
+    if order.index(want) > order.index(state if state in order else 'dry'):
+        return want, src
+    return state, ''
+
+
 def driver_table(session_key):
     """driver number -> (acronym, team name, team colour hex) for a session."""
     out = {}
@@ -455,6 +500,7 @@ def timing_segments(s, parent, weather=None):
     # segments are not stored without their best laps, they're fetched again on the next run
     laps = openf1('laps', session_key=s['session_key'])
     drivers = driver_table(s['session_key'])
+    tyre_of, declared = wet_tools(s['session_key'], parse_time(s['date_start']))
     segs = []
     for p in sorted(greens):
         t0 = greens[p]
@@ -485,10 +531,16 @@ def timing_segments(s, parent, weather=None):
         best, best_drv, best_lap = None, '', None
         for lap in laps:
             d, ls = lap.get('lap_duration'), lap.get('date_start')
-            if d and ls and t0 <= parse_time(ls) <= t1:
+            if valid_lap(lap) and t0 <= parse_time(ls) <= t1:
                 if best is None or d < best:
                     best, best_lap = d, lap
                     best_drv = drivers.get(lap.get('driver_number'), ('',))[0]
+        tyre = tyre_of(best_lap) if best_lap else ''
+        track_src = ''
+        if state != 'rain':
+            state, track_src = wet_from_tyres(state, tyre, declared)
+            if track_src and pw < 15:
+                pw = 19
         snap_t = t1 - timedelta(minutes=2)                 # time of day for the final flying laps
         local, stamp = local_from_utc(snap_t, s['gmt_offset'])
         wind_ms = median(f('wind_speed'))
@@ -503,6 +555,7 @@ def timing_segments(s, parent, weather=None):
             'rain': 1 if state == 'rain' else 0, 'rain_frac': round(rain_end, 2), 'track_state': state,
             'pure_weather': pw, 'best_lap': fmt_lap(best), 'best_lap_s': round(best, 3) if best else '',
             'best_driver': best_drv, 'source': 'timing', **lap_extras(best_lap, drivers),
+            'track_src': track_src, 'best_tyre': tyre,
         })
     return segs
 
@@ -632,21 +685,33 @@ def timing_practice(s, meeting, rnd):
 
     out = []
     win = timedelta(minutes=FP_STEP_WINDOW)
+    # no try/except: a failed lap download (e.g. OpenF1 locked during a live session) must not store the
+    # session without its fastest lap; it is fetched again on the next run
+    laps = openf1('laps', session_key=s['session_key'])
+    good = [l for l in laps if valid_lap(l)]
+    tyre_of, declared = wet_tools(s['session_key'], start) if good else ((lambda l: ''), False)
     for i, t in enumerate(fp_step_times(start, end)):
         c = conditions(t - win, t + win, t)
         if c:
+            # best lap started in this step's window: shows how a wet / damp session dried
+            inwin = [l for l in good if t - win <= parse_time(l['date_start']) < t + win]
+            if inwin:
+                bl = min(inwin, key=lambda l: l['lap_duration'])
+                tyre = tyre_of(bl)
+                c.update(best_lap=fmt_lap(bl['lap_duration']), best_lap_s=round(bl['lap_duration'], 3), best_tyre=tyre)
+                if c['track_state'] != 'rain':
+                    c['track_state'], c['track_src'] = wet_from_tyres(c['track_state'], tyre, declared)
+            elif declared and c['track_state'] == 'dry':
+                c['track_state'], c['track_src'] = 'drying', 'race control'
             out.append(fp_part(meta, s['gmt_offset'], t, 'step', i, **c))
     if not out:
         return []
-    # fastest lap of the session (out-laps excluded): conditions from 3 min before it to its end
-    # no try/except: a failed lap download (e.g. OpenF1 locked during a live session) must not store the
-    # session without its fastest lap; it is fetched again on the next run
+    # fastest lap of the session (out-laps and red-flag 'laps' excluded): conditions from 3 min before it to its end
     best = None
-    laps = openf1('laps', session_key=s['session_key'])
-    for lap in laps:
-        d, ls = lap.get('lap_duration'), lap.get('date_start')
-        if d and ls and not lap.get('is_pit_out_lap') and (best is None or d < best[0]):
-            best = (d, parse_time(ls), lap.get('driver_number'), lap)
+    for lap in good:
+        d = lap['lap_duration']
+        if best is None or d < best[0]:
+            best = (d, parse_time(lap['date_start']), lap.get('driver_number'), lap)
     drv, drivers = '', {}
     if best:
         drivers = driver_table(s['session_key'])
@@ -656,6 +721,11 @@ def timing_practice(s, meeting, rnd):
         c = conditions(t - timedelta(minutes=3), t + timedelta(seconds=best[0] + 60), t)
         lap = {'best_lap': fmt_lap(best[0]), 'best_lap_s': round(best[0], 3), 'best_driver': drv,
                **lap_extras(best[3], drivers)}
+        if c:
+            tyre = tyre_of(best[3])
+            lap['best_tyre'] = tyre
+            if c['track_state'] != 'rain':
+                c['track_state'], c['track_src'] = wet_from_tyres(c['track_state'], tyre, declared)
     else:
         t = start + timedelta(minutes=FP_FASTEST_FORECAST_MIN)
         c = conditions(t - win, t + win, t)
@@ -663,8 +733,9 @@ def timing_practice(s, meeting, rnd):
     if c:
         out.insert(0, fp_part(meta, s['gmt_offset'], t, 'fastest', 0, **c, **lap))
     if not best:
-        if end > NOW - timedelta(days=2):
+        if not laps and end > NOW - timedelta(days=2):
             return []         # laps not in the feed yet: don't store it without them, try again next run
+        # laps in the feed but no timed one (e.g. a wet session with no running): stored as measured
         # the feed really has no laps: marker, so the session isn't fetched again every run
         out.append(dict(meta, part='nolap', step=0, utc_start=start.strftime('%Y-%m-%dT%H:%M:%SZ'), source='timing'))
     return out
@@ -786,7 +857,12 @@ def fill_sectors(segs, fp_rows, budget_s=SECTOR_SECONDS):
 # at the moment its official S1 and S2 times ended, on the fastest laps of the weekend (median).
 # Used by True Timer (standalone, or with True Conditions); the weather files are not touched.
 LINE_COLUMNS = ['year', 'circuit', 'display', 'track_keywords', 's1', 's2', 'laps', 'spread', 'length_m',
-                'session_key', 'session', 'utc_start', 'p0', 'p1', 'p2', 'outline']
+                'session_key', 'session', 'utc_start', 'p0', 'p1', 'p2', 'outline', 'g1', 'g2', 'g3', 'g_src']
+# g1 / g2 / g3: how "grip-limited" each sector is, measured on the weekend's fastest DRY lap (OpenF1 car_data,
+# ~4 Hz): the share of the sector's time spent braking, on part throttle, or on full throttle below
+# 200 km/h (traction-limited). Long straights are low, twisty sectors high. True Conditions uses it to
+# tell how much of a sector's wet time loss is down to wetness (a straight loses little even when wet).
+# g_src: the lap measured, or 'none' when there was no usable dry lap.
 # p0 / p1 / p2: where the finish line, S1 and S2 lines are on the OpenF1 map (x:y, decimetres, median of
 # the laps). outline: the fastest lap's path, LINE_OUTLINE points evenly spaced from the line (x:y|x:y…).
 # True Timer fits the outline onto the AC track's AI line and puts the lines there, so it works even when
@@ -868,7 +944,64 @@ def measure_lines(s):
             'outline': '|'.join('%d:%d' % (round(x), round(y)) for x, y in res[0][4])}   # the fastest lap
 
 
-def update_lines(path, rows, now, budget_s=LINE_SECONDS):
+GRIP_SECONDS = 180
+
+
+def dry_reference_lap(year, circuit, rows, segs, fp_rows):
+    """(session_key, lap seconds, driver acronym, label) of the fastest dry timed lap of a weekend."""
+    circ_of = {str(r.get('session_key')): (str(r.get('year')), r.get('circuit')) for r in rows}
+    best = None
+    def dry(x):
+        return (x.get('track_state') in (None, '', 'dry')) and str(x.get('rain') or '0') not in ('1', '1.0')
+    def consider(x, label):
+        nonlocal best
+        t = float(x['best_lap_s']) if x.get('best_lap_s') not in (None, '') else None
+        if t and t > 0 and x.get('source') == 'timing' and dry(x) and (not best or t < best[1]):
+            best = (str(x['session_key']), t, x.get('best_driver') or '', label)
+    for x in fp_rows:
+        if str(x.get('year')) == year and x.get('circuit') == circuit and x.get('part') == 'fastest':
+            consider(x, str(x.get('session') or ''))
+    for x in segs:
+        if circ_of.get(str(x.get('session_key'))) == (year, circuit) and int(x.get('segment') or 0) >= 1:
+            consider(x, str(x.get('label') or 'Q'))
+    return best
+
+
+def measure_grip(session_key, lap_s, acronym):
+    """g1..g3: grip-limited share of each timing sector on that lap (see LINE_COLUMNS)."""
+    laps = [l for l in openf1('laps', session_key=int(session_key))
+            if l.get('lap_duration') and abs(l['lap_duration'] - lap_s) < 0.0015 and l.get('date_start')
+            and all(isinstance(l.get(f'duration_sector_{i}'), (int, float)) for i in (1, 2, 3))]
+    if not laps:
+        return None
+    if len(laps) > 1 and acronym:
+        drv = driver_table(int(session_key))
+        laps = [l for l in laps if (drv.get(l['driver_number']) or ('',))[0] == acronym] or laps
+    lap = laps[0]
+    t0 = parse_time(lap['date_start'])
+    t1 = t0 + timedelta(seconds=lap['lap_duration'])
+    iso = lambda t: t.strftime('%Y-%m-%dT%H:%M:%S.%f')
+    cd = openf1('car_data', session_key=int(session_key), driver_number=lap['driver_number'],
+                **{'date>': iso(t0), 'date<': iso(t1)})
+    pts = sorted(((parse_time(p['date']) - t0).total_seconds(), p.get('speed') or 0, p.get('throttle') or 0, p.get('brake') or 0)
+                 for p in cd)
+    if len(pts) < lap['lap_duration'] * 2:
+        return None
+    b1, b2 = lap['duration_sector_1'], lap['duration_sector_1'] + lap['duration_sector_2']
+    tot, lim = [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]
+    for i in range(1, len(pts)):
+        t, v, th, br = pts[i]
+        dt = t - pts[i - 1][0]
+        k = 0 if t < b1 else (1 if t < b2 else 2)
+        tot[k] += dt
+        if br > 0 or th < 98 or v < 200:
+            lim[k] += dt
+    if min(tot) <= 0:
+        return None
+    return {'g1': round(lim[0] / tot[0], 3), 'g2': round(lim[1] / tot[1], 3), 'g3': round(lim[2] / tot[2], 3)}
+
+
+def update_lines(path, rows, now, budget_s=LINE_SECONDS, segs=(), fp_rows=()):
     """Measure the sector lines of every weekend not measured yet (newest first, within a time budget)."""
     kept = {}
     if os.path.exists(path):
@@ -917,6 +1050,35 @@ def update_lines(path, rows, now, budget_s=LINE_SECONDS):
             print(f'    {used["session"]}: S1 {got["s1"]:.4f}  S2 {got["s2"]:.4f}  ({got["laps"]} laps, spread {got["spread"]:.4f})', file=sys.stderr)
         else:
             kept[key] = base                           # no data (yet): retried while recent, then left empty
+    # sector grip (g1..g3) from the weekend's fastest dry lap, for events that don't have it yet
+    begin = time.time()                                # its own few minutes (2 small requests per event)
+    budget_s = min(budget_s, GRIP_SECONDS)
+    gtodo = [k for k, r in kept.items() if r.get('s1') and not r.get('g1') and r.get('g_src') != 'none']
+    gtodo.sort(key=lambda k: str(kept[k].get('utc_start')), reverse=True)
+    if gtodo:
+        print(f'sector grip: {len(gtodo)} events to measure', file=sys.stderr)
+    for k in gtodo:
+        if time.time() - begin > budget_s:
+            print('sector grip: time budget used, the rest on the next runs', file=sys.stderr)
+            break
+        ref = dry_reference_lap(k[0], k[1], rows, segs, fp_rows)
+        if not ref:
+            if parse_time(kept[k]['utc_start']) < now - timedelta(days=2):
+                kept[k]['g_src'] = 'none'
+            continue
+        try:
+            g = measure_grip(ref[0], ref[1], ref[2])
+        except OpenF1Locked:
+            print('  OpenF1 locked (live session): sector grip continues next run', file=sys.stderr)
+            break
+        except Exception as e:
+            print(f'  sector grip {k[0]} {k[1]} failed: {e}', file=sys.stderr)
+            continue
+        if g:
+            kept[k].update(g, g_src=f'{ref[3]} {fmt_lap(ref[1])} {ref[2]}'.strip())
+            print(f'  sector grip {k[0]} {k[1]}: {g["g1"]:.2f} / {g["g2"]:.2f} / {g["g3"]:.2f}  ({kept[k]["g_src"]})', file=sys.stderr)
+        elif parse_time(kept[k]['utc_start']) < now - timedelta(days=2):
+            kept[k]['g_src'] = 'none'
     out = sorted(kept.values(), key=lambda r: (int(r['year']), str(r['utc_start'])))
     write_csv(path, LINE_COLUMNS, out)
     return done
@@ -1026,6 +1188,11 @@ def main():
                 # stored without its fastest lap (lap download failed back then): fetch again
                 print(f'{year} {s["circuit_short_name"]} {s["session_name"]}: fastest lap missing, fetching again', file=sys.stderr)
                 fp_old[key] = kept_fp.pop(key)
+            elif fast is not None and fast.get('track_src') is None and \
+                    parse_time(s['date_start']) > now - timedelta(days=10):
+                # stored before rain tyres / step laps were read: the last 10 days are fetched again once
+                print(f'{year} {s["circuit_short_name"]} {s["session_name"]}: re-reading tyres and step laps', file=sys.stderr)
+                fp_old[key] = kept_fp.pop(key)
             if key in kept_fp:
                 disp, _, _, kw = circuit_info(s['circuit_short_name'], s.get('location'), s.get('country_name'))
                 for r in kept_fp[key]:
@@ -1120,7 +1287,8 @@ def main():
     os.replace(seg_out + '.tmp', seg_out)
     # real F1 sector line positions (True Timer), in their own file
     try:
-        counts['sector_lines'] = update_lines(os.path.join(os.path.dirname(out), 'f1_sector_lines.csv'), rows, now)
+        counts['sector_lines'] = update_lines(os.path.join(os.path.dirname(out), 'f1_sector_lines.csv'), rows, now,
+                                              segs=segs, fp_rows=fp_rows)
     except Exception as e:
         print(f'sector lines failed: {e}', file=sys.stderr)
     print(f'wrote {len(rows)} sessions to {out}, {len(segs)} qualifying segments and {len(fp_rows)} practice '
