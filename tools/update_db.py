@@ -102,10 +102,11 @@ FP_COLUMNS = ['year', 'round', 'meeting', 'circuit', 'country', 'session', 'sess
               'humidity_pct', 'pressure_hpa', 'wind_kmh', 'wind_dir_deg', 'rain', 'rain_frac', 'cloud_pct',
               'precip_mm', 'track_state', 'pure_weather', 'best_lap', 'best_lap_s', 'best_driver', 'source',
               'best_s1', 'best_s2', 'best_s3', 'best_team', 'best_team_colour', 'sector_src', 'best_driver_name',
-              'track_src', 'best_tyre']
+              'track_src', 'best_tyre', 'step_lap', 'step_lap_s']
 # track_src: why the track is wet / damp when the weather station saw no rain: 'tyres' (the best lap was on
 # intermediates / wets) or 'race control' (WET TRACK declared). best_tyre: compound of the best lap.
-# Step rows (every 10 min) carry the best lap of that window too, so a drying session can be followed.
+# step_lap / step_lap_s: on step rows (every 10 min), the best lap of that window, so a drying session can be
+# followed. New columns are only ever added at the end: older app versions read the files by column name.
 
 COLUMNS = ['year', 'round', 'meeting', 'circuit', 'country', 'session', 'local_start', 'utc_start',
            'gmt_offset', 'stamp_ts', 'air_c', 'track_c', 'humidity_pct', 'pressure_hpa', 'wind_kmh',
@@ -698,7 +699,8 @@ def timing_practice(s, meeting, rnd):
             if inwin:
                 bl = min(inwin, key=lambda l: l['lap_duration'])
                 tyre = tyre_of(bl)
-                c.update(best_lap=fmt_lap(bl['lap_duration']), best_lap_s=round(bl['lap_duration'], 3), best_tyre=tyre)
+                # own columns (not best_lap / best_lap_s): older app versions read those as the session's best lap
+                c.update(step_lap=fmt_lap(bl['lap_duration']), step_lap_s=round(bl['lap_duration'], 3), best_tyre=tyre)
                 if c['track_state'] != 'rain':
                     c['track_state'], c['track_src'] = wet_from_tyres(c['track_state'], tyre, declared)
             elif declared and c['track_state'] == 'dry':
@@ -857,12 +859,13 @@ def fill_sectors(segs, fp_rows, budget_s=SECTOR_SECONDS):
 # at the moment its official S1 and S2 times ended, on the fastest laps of the weekend (median).
 # Used by True Timer (standalone, or with True Conditions); the weather files are not touched.
 LINE_COLUMNS = ['year', 'circuit', 'display', 'track_keywords', 's1', 's2', 'laps', 'spread', 'length_m',
-                'session_key', 'session', 'utc_start', 'p0', 'p1', 'p2', 'outline', 'g1', 'g2', 'g3', 'g_src']
+                'session_key', 'session', 'utc_start', 'p0', 'p1', 'p2', 'outline', 'g1', 'g2', 'g3', 'g_src', 'g_q']
 # g1 / g2 / g3: how "grip-limited" each sector is, measured on the weekend's fastest DRY lap (OpenF1 car_data,
 # ~4 Hz): the share of the sector's time spent braking, on part throttle, or on full throttle below
 # 200 km/h (traction-limited). Long straights are low, twisty sectors high. True Conditions uses it to
 # tell how much of a sector's wet time loss is down to wetness (a straight loses little even when wet).
-# g_src: the lap measured, or 'none' when there was no usable dry lap.
+# g_src: the lap measured, or 'none' when there was no usable dry lap. g_q: share of the sector covered by good
+# car data (OpenF1's car data has frozen / missing stretches; under 85 % the next-fastest lap is used).
 # p0 / p1 / p2: where the finish line, S1 and S2 lines are on the OpenF1 map (x:y, decimetres, median of
 # the laps). outline: the fastest lap's path, LINE_OUTLINE points evenly spaced from the line (x:y|x:y…).
 # True Timer fits the outline onto the AC track's AI line and puts the lines there, so it works even when
@@ -968,37 +971,52 @@ def dry_reference_lap(year, circuit, rows, segs, fp_rows):
 
 
 def measure_grip(session_key, lap_s, acronym):
-    """g1..g3: grip-limited share of each timing sector on that lap (see LINE_COLUMNS)."""
+    """g1..g3: grip-limited share of each timing sector (see LINE_COLUMNS), from the car data of the weekend's
+    fastest dry lap. OpenF1's car data sometimes reads 104 (no data) for seconds at a time: those
+    stretches are left out, and a lap needs 85 % of every sector covered by good samples. If the fastest
+    lap's data isn't good enough, the next laps within 1.5 % of it (any driver) are tried."""
     laps = [l for l in openf1('laps', session_key=int(session_key))
-            if l.get('lap_duration') and abs(l['lap_duration'] - lap_s) < 0.0015 and l.get('date_start')
-            and all(isinstance(l.get(f'duration_sector_{i}'), (int, float)) for i in (1, 2, 3))]
+            if valid_lap(l) and abs(l['lap_duration'] - lap_s) <= lap_s * 0.015
+            and all(isinstance(l.get(f'duration_sector_{i}'), (int, float)) and l[f'duration_sector_{i}'] > 0 for i in (1, 2, 3))]
     if not laps:
         return None
-    if len(laps) > 1 and acronym:
-        drv = driver_table(int(session_key))
-        laps = [l for l in laps if (drv.get(l['driver_number']) or ('',))[0] == acronym] or laps
-    lap = laps[0]
-    t0 = parse_time(lap['date_start'])
-    t1 = t0 + timedelta(seconds=lap['lap_duration'])
+    drv = driver_table(int(session_key)) if acronym else {}
+    laps.sort(key=lambda l: (abs(l['lap_duration'] - lap_s) > 0.0015 or (drv.get(l['driver_number']) or ('',))[0] != acronym,
+                             l['lap_duration']))
     iso = lambda t: t.strftime('%Y-%m-%dT%H:%M:%S.%f')
-    cd = openf1('car_data', session_key=int(session_key), driver_number=lap['driver_number'],
-                **{'date>': iso(t0), 'date<': iso(t1)})
-    pts = sorted(((parse_time(p['date']) - t0).total_seconds(), p.get('speed') or 0, p.get('throttle') or 0, p.get('brake') or 0)
-                 for p in cd)
-    if len(pts) < lap['lap_duration'] * 2:
-        return None
-    b1, b2 = lap['duration_sector_1'], lap['duration_sector_1'] + lap['duration_sector_2']
-    tot, lim = [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]
-    for i in range(1, len(pts)):
-        t, v, th, br = pts[i]
-        dt = t - pts[i - 1][0]
-        k = 0 if t < b1 else (1 if t < b2 else 2)
-        tot[k] += dt
-        if br > 0 or th < 98 or v < 200:
-            lim[k] += dt
-    if min(tot) <= 0:
-        return None
-    return {'g1': round(lim[0] / tot[0], 3), 'g2': round(lim[1] / tot[1], 3), 'g3': round(lim[2] / tot[2], 3)}
+    for lap in laps[:4]:
+        t0 = parse_time(lap['date_start'])
+        t1 = t0 + timedelta(seconds=lap['lap_duration'])
+        cd = openf1('car_data', session_key=int(session_key), driver_number=lap['driver_number'],
+                    **{'date>': iso(t0), 'date<': iso(t1)})
+        pts = sorted(((parse_time(p['date']) - t0).total_seconds(), p.get('speed'), p.get('throttle'), p.get('brake'))
+                     for p in cd)
+        # good = real values: speed known, throttle / brake 0..100 (OpenF1 writes 104 when it has no data, and
+        # then repeats the last speed, e.g. Suzuka 2026 Q3 ANT: the whole last sector)
+        good = [p[1] is not None and p[2] is not None and p[3] is not None and 0 <= p[2] <= 100 and 0 <= p[3] <= 100 for p in pts]
+        n = len(pts)
+        b1, b2 = lap['duration_sector_1'], lap['duration_sector_1'] + lap['duration_sector_2']
+        secs = (lap['duration_sector_1'], lap['duration_sector_2'], lap['duration_sector_3'])
+        tot, lim = [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]
+        for k in range(1, n):
+            if not (good[k] and good[k - 1]):
+                continue
+            t, v, th, br = pts[k]
+            dt = t - pts[k - 1][0]
+            if dt > 1.0:                                   # a gap in the data
+                continue
+            sec = 0 if t < b1 else (1 if t < b2 else 2)
+            tot[sec] += dt
+            if br > 0 or th < 98 or v < 200:
+                lim[sec] += dt
+        cover = min(tot[k] / secs[k] for k in range(3))
+        name = (drv.get(lap['driver_number']) or ('',))[0] if drv else ''
+        if cover >= 0.85:
+            return {'g1': round(lim[0] / tot[0], 3), 'g2': round(lim[1] / tot[1], 3), 'g3': round(lim[2] / tot[2], 3),
+                    'g_q': round(cover, 2), '_lap': lap['lap_duration'], '_drv': name}
+        print(f'    car data of {name or lap["driver_number"]} {fmt_lap(lap["lap_duration"])} covers only '
+              f'{cover * 100:.0f} % of a sector, trying the next lap', file=sys.stderr)
+    return None
 
 
 def update_lines(path, rows, now, budget_s=LINE_SECONDS, segs=(), fp_rows=()):
@@ -1053,7 +1071,8 @@ def update_lines(path, rows, now, budget_s=LINE_SECONDS, segs=(), fp_rows=()):
     # sector grip (g1..g3) from the weekend's fastest dry lap, for events that don't have it yet
     begin = time.time()                                # its own few minutes (2 small requests per event)
     budget_s = min(budget_s, GRIP_SECONDS)
-    gtodo = [k for k, r in kept.items() if r.get('s1') and not r.get('g1') and r.get('g_src') != 'none']
+    # (also rows measured before the car data was checked for frozen / missing stretches: no g_q)
+    gtodo = [k for k, r in kept.items() if r.get('s1') and r.get('g_src') != 'none' and (not r.get('g1') or not r.get('g_q'))]
     gtodo.sort(key=lambda k: str(kept[k].get('utc_start')), reverse=True)
     if gtodo:
         print(f'sector grip: {len(gtodo)} events to measure', file=sys.stderr)
@@ -1075,10 +1094,11 @@ def update_lines(path, rows, now, budget_s=LINE_SECONDS, segs=(), fp_rows=()):
             print(f'  sector grip {k[0]} {k[1]} failed: {e}', file=sys.stderr)
             continue
         if g:
-            kept[k].update(g, g_src=f'{ref[3]} {fmt_lap(ref[1])} {ref[2]}'.strip())
+            lap, drv = g.pop('_lap'), g.pop('_drv')
+            kept[k].update(g, g_src=f'{ref[3]} {fmt_lap(lap)} {drv or ref[2]}'.strip())
             print(f'  sector grip {k[0]} {k[1]}: {g["g1"]:.2f} / {g["g2"]:.2f} / {g["g3"]:.2f}  ({kept[k]["g_src"]})', file=sys.stderr)
         elif parse_time(kept[k]['utc_start']) < now - timedelta(days=2):
-            kept[k]['g_src'] = 'none'
+            kept[k].update(g1='', g2='', g3='', g_q='', g_src='none')    # no lap with good car data
     out = sorted(kept.values(), key=lambda r: (int(r['year']), str(r['utc_start'])))
     write_csv(path, LINE_COLUMNS, out)
     return done
