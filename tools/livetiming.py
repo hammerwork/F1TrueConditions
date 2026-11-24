@@ -44,6 +44,7 @@ def _clean_token(t):
 
 TOKEN = _clean_token(os.environ.get('F1TV_TOKEN'))
 STATUS = {}                      # url -> last HTTP status (for the log)
+BODY = {}                        # url -> start of the error answer (for the log; never contains the token)
 
 
 def is_lt_key(k):
@@ -70,6 +71,11 @@ def _get(url, auth=False, tries=4):
                 return body
         except urllib.error.HTTPError as e:
             STATUS[url] = e.code
+            try:
+                BODY[url] = ' '.join(e.read(300).decode('utf-8', 'replace').split())[:160]
+                BODY[url] += f' [server {e.headers.get("Server") or "?"}, x-cache {e.headers.get("X-Cache") or "?"}]'
+            except Exception:
+                pass
             if e.code in (401, 403, 404):
                 return None
             if attempt < tries - 1:
@@ -201,7 +207,21 @@ def _index_from_calendar(year, cal):
     return {'Meetings': meetings} if meetings else None
 
 
+PROBE_2021 = '2021/2021-03-28_Bahrain_Grand_Prix/2021-03-27_Qualifying/SessionInfo.json'
+
+
 def _why_not(year):
+    if TOKEN:
+        # is it the login or the 2020 file names? The same request for a session that surely exists (2021 Bahrain Q)
+        for auth in (True, False):
+            u = OFFICIAL + PROBE_2021
+            txt = _get(u, auth)
+            print(f'    check: F1 archive, 2021 Bahrain qualifying, {"with" if auth else "without"} the token: '
+                  f'{"200 OK" if txt else STATUS.get(u)} {BODY.get(u, "") if not txt else ""}', file=sys.stderr)
+        for u, st in sorted(STATUS.items(), key=lambda kv: not kv[0].endswith('SessionInfo.json')):
+            if u.startswith(OFFICIAL + str(year)):
+                print(f'    2020 request: {u[len(OFFICIAL):]} -> {st} {BODY.get(u, "")}', file=sys.stderr)
+                break
     if not TOKEN:
         return 'no F1TV_TOKEN secret reached the updater (the mirror only has 2021-2022)'
     st = STATUS.get(f'{OFFICIAL}{year}/Index.json')
