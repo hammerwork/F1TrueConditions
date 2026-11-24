@@ -23,7 +23,27 @@ OFFICIAL = 'https://livetiming.formula1.com/static/'
 MIRROR = 'https://livetiming-mirror.fastf1.dev/static/'
 LT_YEARS = (2020, 2021, 2022)
 KEY_BASE = 1_000_000
-TOKEN = (os.environ.get('F1TV_TOKEN') or '').strip()
+
+
+def _clean_token(t):
+    """The F1 TV subscriptionToken, also when the secret holds the whole login-session cookie (URL-encoded JSON),
+    a 'Bearer ...' line or quotes."""
+    t = (t or '').strip().strip('"').strip("'").strip()
+    if t.lower().startswith('bearer '):
+        t = t[7:].strip()
+    if '%7B' in t or '%22' in t:
+        t = urllib.parse.unquote(t)
+    if t.startswith('{'):
+        try:
+            j = json.loads(t)
+            t = ((j.get('data') or {}).get('subscriptionToken') or j.get('subscriptionToken') or '').strip()
+        except Exception:
+            pass
+    return t
+
+
+TOKEN = _clean_token(os.environ.get('F1TV_TOKEN'))
+STATUS = {}                      # url -> last HTTP status (for the log)
 
 
 def is_lt_key(k):
@@ -42,8 +62,14 @@ def _get(url, auth=False, tries=4):
                 headers['Authorization'] = 'Bearer ' + TOKEN
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=90) as r:
-                return r.read().decode('utf-8-sig')
+                STATUS[url] = r.status
+                body = r.read().decode('utf-8-sig')
+                if auth and body.lstrip().startswith('{') and '"Fault"' in body[:200]:
+                    STATUS[url] = 'fault'                # F1's way of saying the login has expired
+                    return None
+                return body
         except urllib.error.HTTPError as e:
+            STATUS[url] = e.code
             if e.code in (401, 403, 404):
                 return None
             if attempt < tries - 1:
@@ -130,6 +156,63 @@ SPRINT_RENAME = {2021: {'Sprint Qualifying': 'Sprint'}}     # 2021's Saturday sp
 _years, _sessions = {}, {}                                  # year -> (meetings, sessions); key -> session
 
 
+# 2020: the archive has no season index for it, so the sessions are looked up one by one (race day, event name,
+# and the days of its sessions; each session's own SessionInfo.json gives the exact times and keys). FP2 of the
+# Eifel GP was the only session that day (FP1 was fogged off), Imola had a two-day weekend.
+CAL_2020 = [
+    ('2020-07-05', 'Austrian Grand Prix', '07-03', '07-04'), ('2020-07-12', 'Styrian Grand Prix', '07-10', '07-11'),
+    ('2020-07-19', 'Hungarian Grand Prix', '07-17', '07-18'), ('2020-08-02', 'British Grand Prix', '07-31', '08-01'),
+    ('2020-08-09', '70th Anniversary Grand Prix', '08-07', '08-08'), ('2020-08-16', 'Spanish Grand Prix', '08-14', '08-15'),
+    ('2020-08-30', 'Belgian Grand Prix', '08-28', '08-29'), ('2020-09-06', 'Italian Grand Prix', '09-04', '09-05'),
+    ('2020-09-13', 'Tuscan Grand Prix', '09-11', '09-12'), ('2020-09-27', 'Russian Grand Prix', '09-25', '09-26'),
+    ('2020-10-11', 'Eifel Grand Prix', '10-09', '10-10'), ('2020-10-25', 'Portuguese Grand Prix', '10-23', '10-24'),
+    ('2020-11-01', 'Emilia Romagna Grand Prix', '10-31', '10-31'), ('2020-11-15', 'Turkish Grand Prix', '11-13', '11-14'),
+    ('2020-11-29', 'Bahrain Grand Prix', '11-27', '11-28'), ('2020-12-06', 'Sakhir Grand Prix', '12-04', '12-05'),
+    ('2020-12-13', 'Abu Dhabi Grand Prix', '12-11', '12-12'),
+]
+
+
+def _index_from_calendar(year, cal):
+    """An Index.json-like season built from each session's SessionInfo.json (official archive, F1 TV token)."""
+    meetings = []
+    for race_day, name, fri, sat in cal:
+        folder = f'{year}/{race_day}_{name.replace(" ", "_")}/'
+        tries = [('Practice 1', fri), ('Practice 2', fri), ('Practice 3', sat), ('Qualifying', sat), ('Race', race_day[5:])]
+        m = None
+        for sname, day in tries:
+            path = f'{folder}{year}-{day}_{sname.replace(" ", "_")}/'
+            txt = _get(OFFICIAL + urllib.parse.quote(path + 'SessionInfo.json', safe='/'), True)
+            if not txt:
+                continue
+            try:
+                si = json.loads(txt)
+            except Exception:
+                continue
+            if m is None:
+                mt = si.get('Meeting') or {}
+                m = {'Key': mt.get('Key'), 'Name': mt.get('Name') or name, 'Location': mt.get('Location'),
+                     'Country': mt.get('Country') or {}, 'Circuit': mt.get('Circuit') or {}, 'Sessions': []}
+            m['Sessions'].append({'Key': si.get('Key'), 'Name': si.get('Name') or sname, 'StartDate': si.get('StartDate'),
+                                  'EndDate': si.get('EndDate'), 'GmtOffset': si.get('GmtOffset'), 'Path': si.get('Path') or path})
+        if m and m.get('Key'):
+            meetings.append(m)
+        elif not meetings:
+            return None                       # not even the first event: the login doesn't work, stop asking
+    return {'Meetings': meetings} if meetings else None
+
+
+def _why_not(year):
+    if not TOKEN:
+        return 'no F1TV_TOKEN secret reached the updater (the mirror only has 2021-2022)'
+    st = STATUS.get(f'{OFFICIAL}{year}/Index.json')
+    probe = [v for k, v in STATUS.items() if k.startswith(OFFICIAL) and k.endswith('SessionInfo.json')]
+    st2 = probe[0] if probe else None
+    what = {401: 'refused (401): the token is wrong or has expired', 403: 'refused (403): the token is wrong or has expired',
+            'fault': 'answered "session expired": log in to F1 TV again and update the secret',
+            404: 'not found (404)'}
+    return (f'F1TV_TOKEN is set ({len(TOKEN)} characters); F1\'s archive {what.get(st2, what.get(st, f"answered {st2 or st}"))}')
+
+
 def season(year):
     if year in _years:
         return _years[year]
@@ -140,11 +223,15 @@ def season(year):
         if txt:
             _base_of_year[year] = base
             break
-    if not txt:
-        print(f'  live timing {year}: no index (mirror has 2021-2022; 2020 needs the F1TV_TOKEN secret)', file=sys.stderr)
+    idx = json.loads(txt) if txt else None
+    if idx is None and year == 2020 and TOKEN:
+        idx = _index_from_calendar(year, CAL_2020)
+        if idx:
+            _base_of_year[year] = OFFICIAL
+    if not idx:
+        print(f'  live timing {year}: not available, {_why_not(year)}', file=sys.stderr)
         _years[year] = ([], [])
         return _years[year]
-    idx = json.loads(txt)
     short_count = {}
     for m in idx.get('Meetings') or []:
         if 'test' in (m.get('Name') or '').lower():
