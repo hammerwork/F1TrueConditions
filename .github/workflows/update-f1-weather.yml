@@ -29,6 +29,10 @@ jobs:
           python-version: '3.12'
 
       - name: Update database
+        env:
+          # F1 TV login token for F1's live-timing archive (2020; 2021-2022 come from FastF1's public mirror).
+          # Optional: set it as a repository secret named F1TV_TOKEN (Settings > Secrets and variables > Actions).
+          F1TV_TOKEN: ${{ secrets.F1TV_TOKEN }}
         run: python "$WEATHER_DIR/tools/update_db.py" --out "$WEATHER_DIR/data/f1_weather_db.csv"
 
       - name: Commit if changed
