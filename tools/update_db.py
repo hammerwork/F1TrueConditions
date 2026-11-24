@@ -25,6 +25,9 @@ Python 3.8+, standard library only.   Usage:  python tools/update_db.py [--full]
 import argparse, csv, json, math, os, sys, time, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import livetiming as lt          # seasons before OpenF1 (2020-2022) from F1's live-timing archive, OpenF1-style
+
 OPENF1 = 'https://api.openf1.org/v1'
 ARCHIVE = 'https://archive-api.open-meteo.com/v1/archive'
 FORECAST = 'https://api.open-meteo.com/v1/forecast'
@@ -67,6 +70,21 @@ CIRCUITS = {
     'Yas Marina Circuit': ('Abu Dhabi',     24.4672,   54.6031, 'yas;abu_dhabi;abudhabi'),
     'Madring':            ('Madrid',        40.4650,   -3.6150, 'madring;madrid'),
     'Kuala Lumpur':       ('Sepang',         2.7608,  101.7382, 'sepang;malaysia;kuala'),
+    # 2020-2022 (live-timing archive names)
+    'Algarve International Circuit': ('Portimão', 37.2306, -8.6267, 'portimao;algarve;portugal'),
+    'Portimao':           ('Portimão',      37.2306,   -8.6267, 'portimao;algarve;portugal'),
+    'Portimão':           ('Portimão',      37.2306,   -8.6267, 'portimao;algarve;portugal'),
+    'Mugello':            ('Mugello',       43.9975,   11.3719, 'mugello'),
+    'Nurburgring':        ('Nürburgring',   50.3356,    6.9475, 'nurburgring;nuerburgring;nurburg'),
+    'Nürburgring':        ('Nürburgring',   50.3356,    6.9475, 'nurburgring;nuerburgring;nurburg'),
+    'Sochi':              ('Sochi',         43.4057,   39.9578, 'sochi;russia'),
+    'Istanbul':           ('Istanbul',      40.9517,   29.4050, 'istanbul;intercity;turkey'),
+    'Paul Ricard':        ('Paul Ricard',   43.2506,    5.7917, 'paul_ricard;ricard;castellet;france'),
+    'Losail':             ('Lusail',        25.4900,   51.4542, 'lusail;losail;qatar'),
+    # second race at the same circuit in a season (named by livetiming.py)
+    'Spielberg (Styrian GP)':  ('Red Bull Ring (Styrian GP)', 47.2197, 14.7647, 'spielberg;redbull;red_bull;rbr;austria'),
+    'Silverstone (70th Anniversary GP)': ('Silverstone (70th Anniversary GP)', 52.0786, -1.0169, 'silverstone'),
+    'Sakhir (Sakhir GP)':      ('Bahrain Outer (Sakhir GP)', 26.0325, 50.5106, 'bahrain;sakhir;outer'),
 }
 
 # Qualifying segments (Q1/Q2/Q3, SQ1/SQ2/SQ3) go to a separate file so older app versions that
@@ -143,6 +161,9 @@ class OpenF1Locked(Exception):
 
 
 def openf1(path, **params):
+    # 2020-2022: F1's live-timing archive (see livetiming.py), answered in OpenF1's format
+    if (path in ('meetings', 'sessions') and int(params.get('year') or 0) in lt.LT_YEARS) or lt.is_lt_key(params.get('session_key')):
+        return lt.query(path, params)
     try:
         data = get_json(f'{OPENF1}/{path}', params)
     except urllib.error.HTTPError as e:
@@ -1261,6 +1282,7 @@ def main():
     ap.add_argument('--out', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'f1_weather_db.csv'))
     ap.add_argument('--full', action='store_true', help='re-download every session')
     ap.add_argument('--now', help='pretend current UTC time (ISO), for testing')
+    ap.add_argument('--no-archive', action='store_true', help='only OpenF1 seasons (2023 on), skip 2020-2022')
     args = ap.parse_args()
     out = os.path.abspath(args.out)
 
@@ -1295,7 +1317,10 @@ def main():
     fp_rows, fp_todo, fp_old = [], [], {}
     counts = {'kept': 0, 'timing': 0, 'forecast': 0, 'pending': 0, 'segments': 0, 'segment_backfill_left': 0,
               'practice_kept': 0, 'practice_new': 0, 'practice_forecast': 0, 'practice_left': 0}
-    for year in range(FIRST_YEAR, now.year + 1):
+    years = list(range(FIRST_YEAR, now.year + 1))
+    if not args.no_archive:
+        years = [y for y in lt.LT_YEARS if y < FIRST_YEAR] + years     # 2020-2022 from the live-timing archive
+    for year in years:
         meetings = {m['meeting_key']: m for m in openf1('meetings', year=year)}
         all_sessions = [s for s in openf1('sessions', year=year) if not s.get('is_cancelled')
                         and 'testing' not in (meetings.get(s['meeting_key'], {}).get('meeting_name') or '').lower()]
