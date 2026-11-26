@@ -133,13 +133,25 @@ COLUMNS = ['year', 'round', 'meeting', 'circuit', 'country', 'session', 'local_s
 
 
 # --------------------------------------------------------------------------------------------- http
+# Certificates: Python on Windows checks websites against the Windows certificate store, and Windows only adds
+# some root certificates when a browser first needs them. Then Open-Meteo fails with "certificate has expired"
+# (an old cross-signed root is found instead of the current one). The certifi package carries an up-to-date
+# set: used when it is installed (the .bat installs it), else the system's.
+import ssl
+try:
+    import certifi
+    SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+except Exception:
+    SSL_CTX = None
+
+
 def get_json(url, params=None, tries=6):
     if params:
         url = url + '?' + urllib.parse.urlencode(params)
     for attempt in range(tries):
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'F1TrueConditions-updater/1.9'})
-            with urllib.request.urlopen(req, timeout=60) as r:
+            with urllib.request.urlopen(req, timeout=60, context=SSL_CTX) as r:
                 return json.loads(r.read().decode('utf-8'))
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503, 504) and attempt < tries - 1:
@@ -1242,7 +1254,7 @@ def update_lines(path, rows, now, budget_s=LINE_SECONDS, segs=(), fp_rows=()):
             kept[key] = base                           # no data (yet): retried while recent, then left empty
     # sector grip (g1..g3) from the weekend's fastest dry lap, for events that don't have it yet
     begin = time.time()                                # its own few minutes (2 small requests per event)
-    budget_s = min(budget_s, GRIP_SECONDS)
+    budget_s = min(budget_s, GRIP_SECONDS * max(1, budget_s // LINE_SECONDS))
     # (also rows measured before the car data was checked for frozen / missing stretches: no g_q)
     gtodo = [k for k, r in kept.items() if r.get('s1') and r.get('g_src') != 'none' and (not r.get('g1') or not r.get('g_q'))]
     gtodo.sort(key=lambda k: str(kept[k].get('utc_start')), reverse=True)
@@ -1283,8 +1295,22 @@ def main():
     ap.add_argument('--full', action='store_true', help='re-download every session')
     ap.add_argument('--now', help='pretend current UTC time (ISO), for testing')
     ap.add_argument('--no-archive', action='store_true', help='only OpenF1 seasons (2023 on), skip 2020-2022')
+    ap.add_argument('--ask-token', action='store_true', help='ask for the F1 TV token (for runs on a home PC)')
+    ap.add_argument('--years', help='only these seasons, e.g. 2020 or 2020,2021 (the rest of the files is kept as it is)')
     args = ap.parse_args()
     out = os.path.abspath(args.out)
+    if args.years and not os.path.exists(out):
+        # a run for a few seasons adds them to the existing files: without them it would write files with only
+        # those seasons, and uploading those would wipe the rest of the database
+        print(f'Not found: {out}\nRun this from the unzipped repo (its tools folder, next to the data folder with the '
+              f'database files in it).', file=sys.stderr)
+        sys.exit(1)
+    if args.ask_token:
+        # (asked here, not in the .bat file: Windows' "set /p" cuts input at 1023 characters, the token is ~1900)
+        print('Paste your F1 TV subscriptionToken (or the whole login-session cookie) and press Enter.', file=sys.stderr)
+        print('It is only used for this run and not saved anywhere.', file=sys.stderr)
+        lt.TOKEN = lt._clean_token(input('Token: '))
+        print(f'  token: {len(lt.TOKEN)} characters', file=sys.stderr)
 
     kept = {}
     if os.path.exists(out) and not args.full:
@@ -1320,11 +1346,18 @@ def main():
     years = list(range(FIRST_YEAR, now.year + 1))
     if not args.no_archive:
         years = [y for y in lt.LT_YEARS if y < FIRST_YEAR] + years     # 2020-2022 from the live-timing archive
+    big = 1 if not args.years else 20            # a one-off fill of a few seasons (on a home PC): no time limits
+    if args.years:
+        want = {int(y) for y in str(args.years).replace(' ', '').split(',') if y}
+        years = [y for y in years if y in want]
+    years_done = set()
     for year in years:
         meetings = {m['meeting_key']: m for m in openf1('meetings', year=year)}
         all_sessions = [s for s in openf1('sessions', year=year) if not s.get('is_cancelled')
                         and 'testing' not in (meetings.get(s['meeting_key'], {}).get('meeting_name') or '').lower()]
         sessions = [s for s in all_sessions if s['session_name'] in SESSIONS]
+        if all_sessions:
+            years_done.add(year)
         # round = order of (non-cancelled) Grand Prix weekends in the season
         order = sorted({s['meeting_key'] for s in sessions}, key=lambda k: min(x['date_start'] for x in sessions if x['meeting_key'] == k))
         rnd = {k: i + 1 for i, k in enumerate(order)}
@@ -1401,10 +1434,28 @@ def main():
             if start <= now + timedelta(days=FORECAST_DAYS):
                 fp_todo.append((s, m, rnd[s['meeting_key']], start, end))
 
+    # seasons not read this run (not asked for with --years, or not reachable: F1's archive refuses GitHub's
+    # servers, so 2020 is filled in from a home PC): their stored rows stay as they are
+    for r in kept.values():
+        try:
+            y = int(r.get('year') or 0)
+        except ValueError:
+            continue
+        if y and y not in years_done:
+            rows.append(r); counts['kept'] += 1
+            segs += kept_segs.get(int(r['session_key']), [])
+    for key, lst in kept_fp.items():
+        try:
+            y = int((lst[0] or {}).get('year') or 0)
+        except ValueError:
+            continue
+        if y and y not in years_done:
+            fp_rows += lst; counts['practice_kept'] += 1
+
     # add Q1/Q2/Q3 to older sessions (first runs after the feature was added), newest first
     backfill.sort(key=lambda sr: sr[0]['date_start'], reverse=True)
     for i, (s, r, old) in enumerate(backfill):
-        if time.time() - t_begin > BACKFILL_SECONDS:
+        if time.time() - t_begin > BACKFILL_SECONDS * big:
             counts['segment_backfill_left'] = len(backfill) - i
             for _, _, o in backfill[i:]:
                 segs += o                                  # keep what was stored until it's fetched again
@@ -1433,7 +1484,7 @@ def main():
         tag = f'{s["year"]} {s["circuit_short_name"]} {s["session_name"]}'
         new = []
         if end <= now:
-            if time.time() - fp_begin > FP_BACKFILL_SECONDS:
+            if time.time() - fp_begin > FP_BACKFILL_SECONDS * big:
                 counts['practice_left'] += 1
                 if end < now - timedelta(days=2):
                     fp_rows += fp_old.get(s['session_key'], [])
@@ -1460,7 +1511,7 @@ def main():
             if new: counts['practice_forecast'] += 1
         fp_rows += new
     # sector times + team for best laps stored before v2.4 (for True Timer)
-    counts['sectors'] = fill_sectors(segs, fp_rows)
+    counts['sectors'] = fill_sectors(segs, fp_rows, SECTOR_SECONDS * big)
     write_csv(fp_out, FP_COLUMNS, sorted(fp_rows, key=lambda x: (str(x['utc_start'])[:10], str(x.get('session')),
                                                                  str(x.get('part')) != 'fastest', int(x.get('step') or 0))))
 
@@ -1483,13 +1534,14 @@ def main():
     os.replace(seg_out + '.tmp', seg_out)
     # real F1 sector line positions (True Timer), in their own file
     try:
-        counts['sector_lines'] = update_lines(os.path.join(os.path.dirname(out), 'f1_sector_lines.csv'), rows, now,
+        counts['sector_lines'] = update_lines(os.path.join(os.path.dirname(out), 'f1_sector_lines.csv'), rows, now, LINE_SECONDS * big,
                                               segs=segs, fp_rows=fp_rows)
     except Exception as e:
         print(f'sector lines failed: {e}', file=sys.stderr)
     # corner speeds of wet sessions (True Conditions' corner-by-corner wetness), in their own file
     try:
-        counts['corner_wet'] = update_corners(os.path.join(os.path.dirname(out), 'f1_corner_wet.csv'), rows, segs, fp_rows, now)
+        counts['corner_wet'] = update_corners(os.path.join(os.path.dirname(out), 'f1_corner_wet.csv'), rows, segs, fp_rows, now,
+                                              CORNER_SECONDS * big)
     except Exception as e:
         print(f'corner speeds failed: {e}', file=sys.stderr)
     print(f'wrote {len(rows)} sessions to {out}, {len(segs)} qualifying segments and {len(fp_rows)} practice '

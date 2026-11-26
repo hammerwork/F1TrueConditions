@@ -62,7 +62,7 @@ def _get(url, auth=False, tries=4):
             if auth and TOKEN:
                 headers['Authorization'] = 'Bearer ' + TOKEN
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=90) as r:
+            with urllib.request.urlopen(req, timeout=90, context=_ctx()) as r:
                 STATUS[url] = r.status
                 body = r.read().decode('utf-8-sig')
                 if auth and body.lstrip().startswith('{') and '"Fault"' in body[:200]:
@@ -85,6 +85,14 @@ def _get(url, auth=False, tries=4):
             if attempt < tries - 1:
                 time.sleep(3 * (attempt + 1)); continue
             return None
+
+
+def _ctx():
+    try:
+        import ssl, certifi                         # up-to-date certificates when installed (see update_db.py)
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return None
 
 
 _base_of_year = {}
