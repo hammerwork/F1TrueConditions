@@ -886,6 +886,65 @@ def fill_sectors(segs, fp_rows, budget_s=SECTOR_SECONDS):
     return done
 
 
+TYRE_SECONDS = 600                         # time budget per run for adding the best lap's tyre to older rows
+
+
+def fill_tyres(segs, fp_rows, budget_s=TYRE_SECONDS, reachable=lambda key: True):
+    """best_tyre (compound of the stored best lap: SOFT / MEDIUM / HARD / INTERMEDIATE / WET) for rows stored
+    before it was collected (newest first, one laps + stints download per session, within a time budget).
+    '-' = looked up, not known (no stints / not the same lap), so it isn't looked up again every run."""
+    todo = {}
+    for x in segs:
+        if x.get('source') == 'timing' and x.get('best_lap_s') not in (None, '') and int(x.get('segment') or 0) >= 1 \
+                and not x.get('best_tyre') and reachable(int(x['session_key'])):
+            todo.setdefault(str(x['session_key']), []).append(('seg', x))
+    for x in fp_rows:
+        if x.get('source') == 'timing' and x.get('part') == 'fastest' and x.get('best_lap_s') not in (None, '') \
+                and not x.get('best_tyre') and reachable(int(x['session_key'])):
+            todo.setdefault(str(x['session_key']), []).append(('fp', x))
+    begin, done = time.time(), 0
+    if todo:
+        print(f'best-lap tyres: {len(todo)} sessions to add (up to {budget_s // 60} min this run, newest first)', file=sys.stderr)
+    for n, (key, items) in enumerate(sorted(todo.items(), key=lambda kv: max(str(x.get('utc_start')) for _, x in kv[1]), reverse=True)):
+        if time.time() - begin > budget_s:
+            print(f'best-lap tyres: time budget used, {len(todo) - n} sessions left for the next runs', file=sys.stderr)
+            break
+        try:
+            laps = openf1('laps', session_key=int(key))
+            stints = openf1('stints', session_key=int(key))
+            drivers = driver_table(int(key))
+        except OpenF1Locked:
+            print('  OpenF1 locked (live session): tyres continue next run', file=sys.stderr)
+            break
+        except Exception as e:
+            print(f'  tyres for session {key} failed: {e}', file=sys.stderr)
+            continue
+        for kind, x in items:
+            want = float(x['best_lap_s'])
+            lo = hi = None
+            if kind == 'seg':
+                try:
+                    lo, hi = parse_time(x['utc_start']), parse_time(x['utc_end'])
+                except Exception:
+                    lo = hi = None
+            cands = [l for l in laps if l.get('lap_duration') and l.get('date_start') and abs(l['lap_duration'] - want) < 0.0015
+                     and not (lo and hi and not (lo <= parse_time(l['date_start']) <= hi))]
+            acr = x.get('best_driver') or ''
+            if len(cands) > 1 and acr:
+                cands = [l for l in cands if (drivers.get(l['driver_number']) or ('',))[0] == acr] or cands
+            tyre = ''
+            if cands:
+                lap = cands[0]
+                for st in stints:
+                    if st.get('driver_number') == lap.get('driver_number') and lap.get('lap_number') is not None and \
+                            (st.get('lap_start') or 0) <= lap['lap_number'] <= (st.get('lap_end') or 999):
+                        tyre = (st.get('compound') or '').upper()
+                        break
+            x['best_tyre'] = tyre or '-'
+            done += 1
+    return done
+
+
 # --------------------------------------------------------------------------------------------- sector lines
 # data/f1_sector_lines.csv: where the real F1 sector lines are, per circuit and year, as a share of the lap
 # distance (0..1 from the start/finish line). Measured from OpenF1: the car's position (location, ~4 Hz)
@@ -1351,6 +1410,7 @@ def main():
         want = {int(y) for y in str(args.years).replace(' ', '').split(',') if y}
         years = [y for y in years if y in want]
     years_done = set()
+    seen = set()                                 # session keys this run got back from the feeds
     for year in years:
         meetings = {m['meeting_key']: m for m in openf1('meetings', year=year)}
         all_sessions = [s for s in openf1('sessions', year=year) if not s.get('is_cancelled')
@@ -1358,6 +1418,7 @@ def main():
         sessions = [s for s in all_sessions if s['session_name'] in SESSIONS]
         if all_sessions:
             years_done.add(year)
+        seen.update(int(s['session_key']) for s in all_sessions)
         # round = order of (non-cancelled) Grand Prix weekends in the season
         order = sorted({s['meeting_key'] for s in sessions}, key=lambda k: min(x['date_start'] for x in sessions if x['meeting_key'] == k))
         rnd = {k: i + 1 for i, k in enumerate(order)}
@@ -1441,7 +1502,9 @@ def main():
             y = int(r.get('year') or 0)
         except ValueError:
             continue
-        if y and y not in years_done:
+        # (2020-2022: also stored sessions the archive didn't list this run: a half-answered season, e.g. F1's
+        # archive refusing some of GitHub's requests, must never wipe what a home PC filled in)
+        if y and (y not in years_done or (y in lt.LT_YEARS and int(r['session_key']) not in seen)):
             rows.append(r); counts['kept'] += 1
             segs += kept_segs.get(int(r['session_key']), [])
     for key, lst in kept_fp.items():
@@ -1449,7 +1512,7 @@ def main():
             y = int((lst[0] or {}).get('year') or 0)
         except ValueError:
             continue
-        if y and y not in years_done:
+        if y and (y not in years_done or (y in lt.LT_YEARS and int(key) not in seen)):
             fp_rows += lst; counts['practice_kept'] += 1
 
     # add Q1/Q2/Q3 to older sessions (first runs after the feature was added), newest first
@@ -1512,6 +1575,14 @@ def main():
         fp_rows += new
     # sector times + team for best laps stored before v2.4 (for True Timer)
     counts['sectors'] = fill_sectors(segs, fp_rows, SECTOR_SECONDS * big)
+    # compound of the best laps stored before it was collected (archive seasons only when read this run)
+    year_of = {int(r['session_key']): int(r.get('year') or 0) for r in rows if r.get('session_key')}
+    for x in fp_rows:
+        if x.get('session_key'):
+            year_of.setdefault(int(x['session_key']), int(x.get('year') or 0))
+    counts['tyres'] = fill_tyres(segs, fp_rows, TYRE_SECONDS * big,
+                                 lambda key: (year_of.get(key) in years_done) if args.years else
+                                 (not lt.is_lt_key(key) or year_of.get(key) in years_done))
     write_csv(fp_out, FP_COLUMNS, sorted(fp_rows, key=lambda x: (str(x['utc_start'])[:10], str(x.get('session')),
                                                                  str(x.get('part')) != 'fastest', int(x.get('step') or 0))))
 
