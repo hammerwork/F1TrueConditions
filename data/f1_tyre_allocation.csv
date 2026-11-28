@@ -1,0 +1,154 @@
+year,round,meeting,circuit,display,hard,medium,soft,source
+2020,1,Austrian Grand Prix,Spielberg,Red Bull Ring,C2,C3,C4,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,2,Styrian Grand Prix,Spielberg (Styrian GP),Red Bull Ring (Styrian GP),C2,C3,C4,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,3,Hungarian Grand Prix,Hungaroring,Hungaroring,C2,C3,C4,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,4,British Grand Prix,Silverstone,Silverstone,C1,C2,C3,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,5,70th Anniversary Grand Prix,Silverstone (70th Anniversary GP),Silverstone (70th Anniversary GP),C2,C3,C4,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,6,Spanish Grand Prix,Catalunya,Barcelona,C1,C2,C3,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,7,Belgian Grand Prix,Spa-Francorchamps,Spa,C2,C3,C4,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,8,Italian Grand Prix,Monza,Monza,C2,C3,C4,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,9,Tuscan Grand Prix,Mugello,Mugello,C1,C2,C3,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,10,Russian Grand Prix,Sochi,Sochi,C3,C4,C5,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,11,Eifel Grand Prix,Nürburgring,Nürburgring,C2,C3,C4,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,12,Portuguese Grand Prix,Algarve International Circuit,Portimão,C1,C2,C3,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,13,Emilia Romagna Grand Prix,Imola,Imola,C2,C3,C4,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,14,Turkish Grand Prix,Istanbul,Istanbul,C1,C2,C3,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,15,Bahrain Grand Prix,Sakhir,Bahrain,C2,C3,C4,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,16,Sakhir Grand Prix,Sakhir Outer Track,Sakhir Outer Track,C2,C3,C4,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2020,17,Abu Dhabi Grand Prix,Yas Marina Circuit,Abu Dhabi,C3,C4,C5,"harningle/fia-doc tyres.json (FIA event notes, Pirelli preview); Pirelli press 2020-09-09"
+2021,1,Bahrain Grand Prix,Sakhir,Bahrain,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,2,Emilia Romagna Grand Prix,Imola,Imola,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,3,Portuguese Grand Prix,Algarve International Circuit,Portimão,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,4,Spanish Grand Prix,Catalunya,Barcelona,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,5,Monaco Grand Prix,Monte Carlo,Monaco,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,6,Azerbaijan Grand Prix,Baku,Baku,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,7,French Grand Prix,Paul Ricard,Paul Ricard,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,8,Styrian Grand Prix,Spielberg (Styrian GP),Red Bull Ring (Styrian GP),C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,9,Austrian Grand Prix,Spielberg,Red Bull Ring,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,10,British Grand Prix,Silverstone,Silverstone,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,11,Hungarian Grand Prix,Hungaroring,Hungaroring,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,12,Belgian Grand Prix,Spa-Francorchamps,Spa,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,13,Dutch Grand Prix,Zandvoort,Zandvoort,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,14,Italian Grand Prix,Monza,Monza,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,15,Russian Grand Prix,Sochi,Sochi,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,16,Turkish Grand Prix,Istanbul,Istanbul,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,17,United States Grand Prix,Austin,Austin (COTA),C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,18,Mexico City Grand Prix,Mexico City,Mexico City,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,19,São Paulo Grand Prix,Interlagos,Interlagos,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,20,Qatar Grand Prix,Losail,Lusail,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,21,Saudi Arabian Grand Prix,Jeddah,Jeddah,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2021,22,Abu Dhabi Grand Prix,Yas Marina Circuit,Abu Dhabi,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,1,Bahrain Grand Prix,Sakhir,Bahrain,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,2,Saudi Arabian Grand Prix,Jeddah,Jeddah,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,3,Australian Grand Prix,Melbourne,Melbourne,C2,C3,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,4,Emilia Romagna Grand Prix,Imola,Imola,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,5,Miami Grand Prix,Miami,Miami,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,6,Spanish Grand Prix,Catalunya,Barcelona,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,7,Monaco Grand Prix,Monte Carlo,Monaco,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,8,Azerbaijan Grand Prix,Baku,Baku,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,9,Canadian Grand Prix,Montreal,Montreal,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,10,British Grand Prix,Silverstone,Silverstone,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,11,Austrian Grand Prix,Spielberg,Red Bull Ring,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,12,French Grand Prix,Paul Ricard,Paul Ricard,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,13,Hungarian Grand Prix,Hungaroring,Hungaroring,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,14,Belgian Grand Prix,Spa-Francorchamps,Spa,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,15,Dutch Grand Prix,Zandvoort,Zandvoort,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,16,Italian Grand Prix,Monza,Monza,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,17,Singapore Grand Prix,Singapore,Singapore,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,18,Japanese Grand Prix,Suzuka,Suzuka,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,19,United States Grand Prix,Austin,Austin (COTA),C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,20,Mexico City Grand Prix,Mexico City,Mexico City,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,21,São Paulo Grand Prix,Interlagos,Interlagos,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2022,22,Abu Dhabi Grand Prix,Yas Marina Circuit,Abu Dhabi,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,1,Bahrain Grand Prix,Sakhir,Bahrain,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,2,Saudi Arabian Grand Prix,Jeddah,Jeddah,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,3,Australian Grand Prix,Melbourne,Melbourne,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,4,Azerbaijan Grand Prix,Baku,Baku,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,5,Miami Grand Prix,Miami,Miami,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,6,Monaco Grand Prix,Monte Carlo,Monaco,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,7,Spanish Grand Prix,Catalunya,Barcelona,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,8,Canadian Grand Prix,Montreal,Montreal,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,9,Austrian Grand Prix,Spielberg,Red Bull Ring,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,10,British Grand Prix,Silverstone,Silverstone,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,11,Hungarian Grand Prix,Hungaroring,Hungaroring,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,12,Belgian Grand Prix,Spa-Francorchamps,Spa,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,13,Dutch Grand Prix,Zandvoort,Zandvoort,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,14,Italian Grand Prix,Monza,Monza,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,15,Singapore Grand Prix,Singapore,Singapore,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,16,Japanese Grand Prix,Suzuka,Suzuka,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,17,Qatar Grand Prix,Lusail,Lusail,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,18,United States Grand Prix,Austin,Austin (COTA),C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,19,Mexico City Grand Prix,Mexico City,Mexico City,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,20,São Paulo Grand Prix,Interlagos,Interlagos,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,21,Las Vegas Grand Prix,Las Vegas,Las Vegas,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2023,22,Abu Dhabi Grand Prix,Yas Marina Circuit,Abu Dhabi,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,1,Bahrain Grand Prix,Sakhir,Bahrain,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,2,Saudi Arabian Grand Prix,Jeddah,Jeddah,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,3,Australian Grand Prix,Melbourne,Melbourne,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,4,Japanese Grand Prix,Suzuka,Suzuka,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,5,Chinese Grand Prix,Shanghai,Shanghai,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,6,Miami Grand Prix,Miami,Miami,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,7,Emilia Romagna Grand Prix,Imola,Imola,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,8,Monaco Grand Prix,Monte Carlo,Monaco,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,9,Canadian Grand Prix,Montreal,Montreal,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,10,Spanish Grand Prix,Catalunya,Barcelona,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,11,Austrian Grand Prix,Spielberg,Red Bull Ring,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,12,British Grand Prix,Silverstone,Silverstone,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,13,Hungarian Grand Prix,Hungaroring,Hungaroring,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,14,Belgian Grand Prix,Spa-Francorchamps,Spa,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,15,Dutch Grand Prix,Zandvoort,Zandvoort,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,16,Italian Grand Prix,Monza,Monza,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,17,Azerbaijan Grand Prix,Baku,Baku,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,18,Singapore Grand Prix,Singapore,Singapore,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,19,United States Grand Prix,Austin,Austin (COTA),C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,20,Mexico City Grand Prix,Mexico City,Mexico City,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,21,São Paulo Grand Prix,Interlagos,Interlagos,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,22,Las Vegas Grand Prix,Las Vegas,Las Vegas,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,23,Qatar Grand Prix,Lusail,Lusail,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2024,24,Abu Dhabi Grand Prix,Yas Marina Circuit,Abu Dhabi,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,1,Australian Grand Prix,Melbourne,Melbourne,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,2,Chinese Grand Prix,Shanghai,Shanghai,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,3,Japanese Grand Prix,Suzuka,Suzuka,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,4,Bahrain Grand Prix,Sakhir,Bahrain,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,5,Saudi Arabian Grand Prix,Jeddah,Jeddah,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,6,Miami Grand Prix,Miami,Miami,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,7,Emilia Romagna Grand Prix,Imola,Imola,C4,C5,C6,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,8,Monaco Grand Prix,Monte Carlo,Monaco,C4,C5,C6,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,9,Spanish Grand Prix,Catalunya,Barcelona,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,10,Canadian Grand Prix,Montreal,Montreal,C4,C5,C6,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,11,Austrian Grand Prix,Spielberg,Red Bull Ring,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,12,British Grand Prix,Silverstone,Silverstone,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,13,Belgian Grand Prix,Spa-Francorchamps,Spa,C1,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,14,Hungarian Grand Prix,Hungaroring,Hungaroring,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,15,Dutch Grand Prix,Zandvoort,Zandvoort,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,16,Italian Grand Prix,Monza,Monza,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,17,Azerbaijan Grand Prix,Baku,Baku,C4,C5,C6,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,18,Singapore Grand Prix,Singapore,Singapore,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,19,United States Grand Prix,Austin,Austin (COTA),C1,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,20,Mexico City Grand Prix,Mexico City,Mexico City,C2,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,21,São Paulo Grand Prix,Interlagos,Interlagos,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,22,Las Vegas Grand Prix,Las Vegas,Las Vegas,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,23,Qatar Grand Prix,Lusail,Lusail,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2025,24,Abu Dhabi Grand Prix,Yas Marina Circuit,Abu Dhabi,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,1,Australian Grand Prix,Melbourne,Melbourne,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,2,Chinese Grand Prix,Shanghai,Shanghai,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,3,Japanese Grand Prix,Suzuka,Suzuka,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,4,Miami Grand Prix,Miami,Miami,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,5,Canadian Grand Prix,Montreal,Montreal,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,6,Monaco Grand Prix,Monte Carlo,Monaco,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,7,Barcelona Grand Prix,Catalunya,Barcelona,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,8,Austrian Grand Prix,Spielberg,Red Bull Ring,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,9,British Grand Prix,Silverstone,Silverstone,C1,C2,C3,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,10,Belgian Grand Prix,Spa-Francorchamps,Spa,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,11,Hungarian Grand Prix,Hungaroring,Hungaroring,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,12,Dutch Grand Prix,Zandvoort,Zandvoort,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,13,Italian Grand Prix,Monza,Monza,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,14,Spanish Grand Prix,Madring,Madrid,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,15,Azerbaijan Grand Prix,Baku,Baku,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,16,Bahrain Grand Prix,Kuala Lumpur,Sepang,C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,17,Singapore Grand Prix,Singapore,Singapore,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,18,United States Grand Prix,Austin,Austin (COTA),C2,C3,C4,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,19,Mexico City Grand Prix,Mexico City,Mexico City,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,20,São Paulo Grand Prix,Interlagos,Interlagos,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,21,Las Vegas Grand Prix,Las Vegas,Las Vegas,C3,C4,C5,aleccrowell/diomedes reference/compounds/nominations.csv
+2026,22,Qatar Grand Prix,Lusail,Lusail,C1,C2,C3,Pirelli press 2026-11-24 in-qatar-with-the-hardest-tyre-compounds-in-the-range
